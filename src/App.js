@@ -8,6 +8,23 @@ import {
 } from 'lucide-react';
 import logo from './logo.jpg'; 
 
+// --- ANIMATION STYLES (INJECTED) ---
+const styleTag = document.createElement("style");
+styleTag.innerHTML = `
+  @keyframes float { 0%, 100% { transform: translateY(0px) rotate(0deg); } 50% { transform: translateY(-20px) rotate(5deg); } }
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-10px); } 75% { transform: translateX(10px); } }
+  @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-float { animation: float 6s ease-in-out infinite; }
+  .animate-shake { animation: shake 0.4s ease-in-out; }
+  .animate-pop { animation: pop 0.3s ease-in-out; }
+  .animate-slide-in { animation: slideIn 0.5s ease-out forwards; }
+  .delay-100 { animation-delay: 0.1s; }
+  .delay-200 { animation-delay: 0.2s; }
+  .delay-300 { animation-delay: 0.3s; }
+`;
+document.head.appendChild(styleTag);
+
 const App = () => {
   // --- SECURITY ---
   useEffect(() => {
@@ -34,15 +51,14 @@ const App = () => {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     if (selectedVoice) u.voice = selectedVoice;
-    u.pitch = 1.1; u.rate = 0.9;
+    u.pitch = 1.2; u.rate = 0.9; 
     window.speechSynthesis.speak(u);
   };
 
   // --- AUTOMATIC SERVER DETECTION ---
-  // If we are on "localhost", use the local database. If we are on Netlify/Render, use the cloud database.
   const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:5000/api'  // Testing on Computer
-    : 'https://school-app-backend.onrender.com/api'; // Live Website
+    ? 'http://localhost:5000/api'  
+    : 'https://school-app-backend.onrender.com/api'; 
    
   // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
@@ -71,6 +87,9 @@ const App = () => {
   const [practiceTimer, setPracticeTimer] = useState(0);
   const [loadingAI, setLoadingAI] = useState(false); 
 
+  // UI Animation States
+  const [feedbackState, setFeedbackState] = useState(null); 
+
   // Exam Config
   const [sessionConfig, setSessionConfig] = useState({ mode: 'test_standard', globalTimer: 60, timerPerWord: 0 });
   const [testSessions, setTestSessions] = useState({}); 
@@ -82,40 +101,31 @@ const App = () => {
 
   // --- DATA SYNCING ---
   const refreshData = () => {
-      // 1. Get Classes from DB
       fetch(`${API_URL}/classes`)
-        .then(r => {
-            if(!r.ok) throw new Error("Server not responding");
-            return r.json();
-        })
+        .then(r => { if(!r.ok) throw new Error("Err"); return r.json(); })
         .then(data => setClasses(data.map(d => d.name).sort()))
-        .catch(e => console.log("Classes not loaded - Is the backend server running?"));
+        .catch(e => console.log("Classes offline"));
 
-      // 2. Get Results from DB
       fetch(`${API_URL}/results`)
         .then(r => r.json())
         .then(setResults)
-        .catch(e => console.log("Results not loaded"));
+        .catch(e => console.log("Results offline"));
 
-      // 3. Get Users if Admin
       if(currentUser?.role === 'admin') {
-          fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers).catch(e => console.log("Users not loaded"));
+          fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers).catch(e => console.log("Users offline"));
       }
   };
 
   useEffect(() => {
-    // Check local session
     const savedUser = localStorage.getItem('hms_user_session');
     if (savedUser) {
         const parsedUser = JSON.parse(savedUser);
         setCurrentUser(parsedUser);
         setActiveView(parsedUser.role === 'student' ? 'student_dash' : parsedUser.role === 'teacher' ? 'teacher_dash' : 'admin_dash');
     }
-    // Load Data
     refreshData();
   }, []);
 
-  // Poll for Active Tests (Student View)
   useEffect(() => {
       let poller;
       if (currentUser?.role === 'student' && activeView === 'student_dash') {
@@ -157,7 +167,6 @@ const App = () => {
             antonyms: meaning.antonyms.slice(0, 3).join(", ") || "None found",
             etymology: entry.origin || `Origin of ${word}`
         }));
-        alert("✨ Data auto-filled!");
     } catch (error) {
         alert("⚠️ Word not found in global dictionary. Please fill manually.");
     } finally {
@@ -176,7 +185,6 @@ const App = () => {
               body: JSON.stringify({ newPassword: newPass })
           });
           if (res.ok) alert(`Success! Password updated.`);
-          else alert("Failed to reset password.");
       } catch (e) { alert("Server Error."); }
   };
 
@@ -186,8 +194,7 @@ const App = () => {
           const res = await fetch(`${API_URL}/users/${userId}`, { method: 'DELETE' });
           if(res.ok) {
               setUsers(prev => prev.filter(u => u._id !== userId));
-              alert("User Deleted.");
-          } else { alert("Failed to delete user."); }
+          }
       } catch(e) { alert("Connection Error."); }
   };
 
@@ -245,7 +252,7 @@ const App = () => {
       localStorage.removeItem('hms_user_session');
   };
 
- // --- CLASS MGMT (DB SYNCED) ---
+ // --- CLASS MGMT ---
   const handleAddClass = async () => {
       const name = prompt("Enter new Class Name (e.g., Year 7):");
       if(!name) return;
@@ -256,22 +263,11 @@ const App = () => {
             headers: {'Content-Type': 'application/json'}, 
             body: JSON.stringify({ name })
         });
-
-        const data = await res.json(); // Read the server response
-
-        if(res.ok) {
-            refreshData();
-            alert("Success! Class added.");
-        } else {
-            // Show the ACTUAL error from the server
-            alert(`Error: ${data.message || data.error || "Unknown Server Error"}`);
-        }
-      } catch (error) {
-          console.error("Add Class Error:", error);
-          alert("Connection Failed: Ensure the backend terminal (node server.js) is running.");
-      }
+        const data = await res.json(); 
+        if(res.ok) { refreshData(); } else { alert(`Error: ${data.message || "Exists/Error"}`); }
+      } catch (error) { alert("Connection Failed."); }
   };
-   
+    
   const handleDeleteClass = async (name) => {
       if(!window.confirm(`Delete ${name}?`)) return;
       try {
@@ -281,12 +277,10 @@ const App = () => {
             await fetch(`${API_URL}/classes/${target._id}`, { method: 'DELETE' });
             refreshData();
         }
-      } catch (error) {
-          alert("Server Error: Cannot connect to database.");
-      }
+      } catch (error) { alert("Server Error."); }
   };
 
-  // --- WORD MGMT (DB SYNCED) ---
+  // --- WORD MGMT ---
   const startEditingWord = (wordObj) => {
       setNewWordForm({
           word: wordObj.word, definition: wordObj.definition, synonyms: wordObj.synonyms,
@@ -324,9 +318,9 @@ const App = () => {
             });
             setNewWordForm({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
             setEditingWordId(null);
-            alert(editingWordId ? "Word Updated!" : "Word Added!");
+            alert("Success!");
         }
-    } catch (e) { alert("Failed to save word - Server Error"); }
+    } catch (e) { alert("Failed to save word"); }
   };
 
   const handleDeleteWord = async (targetClass, id, userRole) => {
@@ -388,7 +382,12 @@ const App = () => {
         else if (game.gameType === 'origin') isCorrect = game.input === currentWord.etymology;
         else isCorrect = cleanInput === cleanWord;
     }
-    if (game.mode === 'practice' || game.mode === 'fun') speak(isCorrect ? "Correct" : "Incorrect");
+    
+    // Feedback Animation
+    setFeedbackState(isCorrect ? 'correct' : 'wrong');
+    setTimeout(() => setFeedbackState(null), 500);
+
+    if (game.mode === 'practice' || game.mode === 'fun') speak(isCorrect ? "Correct!" : "Try again.");
 
     const nextScore = isCorrect ? game.score + 1 : game.score;
     const nextIdx = game.index + 1;
@@ -455,41 +454,52 @@ const App = () => {
   }, [currentWord, game.gameType, game.words]);
 
   const FunEmptyState = ({ message }) => (
-      <div className="text-center p-8 border-2 border-dashed border-yellow-300 rounded-3xl bg-yellow-50">
-          <div className="text-6xl mb-4 animate-bounce">🐝</div>
+      <div className="text-center p-8 border-2 border-dashed border-yellow-300 rounded-3xl bg-yellow-50 animate-float">
+          <div className="text-6xl mb-4">🐝</div>
           <h3 className="text-xl font-bold text-yellow-800 mb-2">The Hive is Empty!</h3>
           <p className="text-yellow-700">{message}</p>
       </div>
   );
 
+  const BackgroundBees = () => (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-10 left-10 text-4xl opacity-20 animate-float delay-100">🐝</div>
+        <div className="absolute bottom-20 right-20 text-5xl opacity-20 animate-float delay-200">🐝</div>
+        <div className="absolute top-1/2 left-1/4 text-3xl opacity-10 animate-float delay-300">🌸</div>
+        <div className="absolute top-1/3 right-10 text-4xl opacity-15 animate-float">🌺</div>
+    </div>
+  );
+
   // --- VIEWS ---
   if (activeView === 'login') return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-yellow-300 via-green-400 to-green-600 opacity-90"></div>
-        <div className="absolute inset-0 opacity-20" style={{backgroundImage: 'radial-gradient(#fff 2px, transparent 2px)', backgroundSize: '30px 30px'}}></div>
-        <div className="bg-white/95 backdrop-blur-xl p-8 md:p-12 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.2)] w-full max-w-md border-4 border-white relative z-10">
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden bg-gradient-to-b from-yellow-100 to-green-100">
+        <BackgroundBees />
+        <div className="bg-white/90 backdrop-blur-md p-8 md:p-12 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-full max-w-md border-4 border-white relative z-10 animate-slide-in">
             <div className="flex flex-col items-center mb-8">
-                {/* --- CHANGED: LOGO OR QUEEN BEE --- */}
-                <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mb-4 shadow-xl border-4 border-white overflow-hidden transform hover:scale-110 transition-transform relative">
+                {/* --- FIXED LOGO CENTERING & NAME --- */}
+                <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mb-4 shadow-xl border-4 border-white overflow-hidden transform hover:scale-110 transition-transform relative mx-auto animate-pop">
                    <img 
                      src={logo} 
                      alt="School Logo" 
                      className="w-full h-full object-cover relative z-10" 
                      onError={(e) => {
-                        e.target.style.display = 'none'; // Hide broken image
-                        e.target.nextSibling.style.display = 'flex'; // Show fallback
+                        e.target.style.display = 'none'; 
+                        e.target.nextSibling.style.display = 'flex'; 
                      }} 
                    />
-                   {/* Fallback Queen Bee if logo missing */}
                    <div className="hidden absolute inset-0 items-center justify-center text-6xl animate-bounce z-0">👑🐝</div>
                 </div>
-                {/* ---------------------------------- */}
-                <h1 className="text-4xl font-black text-green-800 text-center uppercase tracking-tighter">un<span className="text-yellow-500">BEE</span>lievable<br/><span className="text-2xl">Spellers</span></h1>
+                <h2 className="text-green-700 font-bold tracking-widest uppercase mb-2 text-center text-sm">His Mercy Private School</h2>
+                {/* BIGGER BEE EMOJI */}
+                <h1 className="text-4xl font-black text-yellow-500 text-center uppercase tracking-tighter drop-shadow-sm">
+                  Un<span className="text-6xl inline-block align-middle hover:scale-125 transition-transform animate-float">🐝</span>lievable<br/>
+                  <span className="text-2xl text-green-800">Spellings</span>
+                </h1>
             </div>
             <div className="flex bg-gray-100 p-1 rounded-full mb-6 shadow-inner">
                 {['student', 'teacher', 'admin'].map(r => (
                     <button key={r} onClick={() => setLoginForm({...loginForm, role: r})}
-                        className={`flex-1 py-3 rounded-full font-black text-sm capitalize transition-all ${loginForm.role === r ? 'bg-yellow-400 text-yellow-900 shadow-md transform scale-105' : 'text-gray-400 hover:text-gray-600'}`}>
+                        className={`flex-1 py-3 rounded-full font-black text-sm capitalize transition-all duration-300 ${loginForm.role === r ? 'bg-yellow-400 text-yellow-900 shadow-md transform scale-105' : 'text-gray-400 hover:text-gray-600'}`}>
                         {r}
                     </button>
                 ))}
@@ -508,7 +518,7 @@ const App = () => {
                         {showPassword ? <EyeOff size={20}/> : <Eye size={20}/>}
                     </button>
                 </div>
-                <button onClick={handleLogin} className="w-full bg-green-600 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-700 hover:scale-[1.02] active:scale-95 transition-all text-lg tracking-wide">ENTER THE HIVE</button>
+                <button onClick={handleLogin} className="w-full bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 hover:scale-[1.02] active:scale-95 transition-all text-lg tracking-wide">ENTER THE HIVE 🐝</button>
             </div>
         </div>
       </div>
@@ -522,73 +532,68 @@ const App = () => {
             <div className="flex items-center gap-2">
                 <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="md:hidden text-yellow-900 p-2 rounded hover:bg-yellow-100"><Menu size={24}/></button>
                 <img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/>
-                <h1 className="text-xl font-black text-yellow-900">Queen Bee Portal</h1>
+                {/* BIGGER BEE EMOJI IN MENU */}
+                <h1 className="text-xl font-black text-yellow-900 flex items-center">
+                  Un<span className="text-3xl mx-1 hover:rotate-12 transition-transform">🐝</span>lievable Spellings
+                </h1>
             </div>
             <button onClick={handleLogout} className="text-red-500 font-bold flex gap-2 hover:bg-red-50 px-4 py-2 rounded-xl transition"><LogOut size={18}/> Exit</button>
         </header>
         <div className="flex flex-1 overflow-hidden relative">
-            {/* --- CHANGED: FIXED MOBILE MENU WITH CLOSE BUTTON --- */}
-            {showMobileMenu && (
-                <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowMobileMenu(false)}></div>
-            )}
+            {showMobileMenu && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowMobileMenu(false)}></div>}
             
-            <nav className={`
-                fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-yellow-200 p-4 flex flex-col gap-2 shadow-2xl
-                transform transition-transform duration-300 ease-in-out 
-                ${showMobileMenu ? 'translate-x-0' : '-translate-x-full'} 
-                md:relative md:translate-x-0 md:shadow-none md:z-0
-            `}>
+            <nav className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-yellow-200 p-4 flex flex-col gap-2 shadow-2xl transform transition-transform duration-300 ease-in-out ${showMobileMenu ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 md:shadow-none md:z-0`}>
                 <div className="flex justify-between items-center mb-4 md:hidden">
                     <span className="font-bold text-yellow-900 text-lg">Menu</span>
                     <button onClick={() => setShowMobileMenu(false)} className="text-gray-500 p-2"><X size={24}/></button>
                 </div>
                 {['students', 'teachers', 'classes', 'curriculum', 'exam_control', 'results'].map(tab => (
-                    <button key={tab} onClick={() => { setAdminTab(tab); setShowMobileMenu(false); }} className={`w-full text-left p-3 rounded-xl font-bold capitalize ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md' : 'text-gray-500 hover:bg-yellow-50'}`}>
+                    <button key={tab} onClick={() => { setAdminTab(tab); setShowMobileMenu(false); }} className={`w-full text-left p-3 rounded-xl font-bold capitalize transition-all ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md translate-x-2' : 'text-gray-500 hover:bg-yellow-50 hover:translate-x-1'}`}>
                         {tab.replace('_', ' ')}
                     </button>
                 ))}
             </nav>
-            {/* ---------------------------------------------------- */}
 
-            <main className="flex-1 p-8 overflow-y-auto w-full">
+            <main className="flex-1 p-8 overflow-y-auto w-full animate-slide-in">
                 {['students', 'teachers'].includes(adminTab) && (
                     <div className="space-y-6">
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
                             <h2 className="font-bold text-lg text-yellow-900 mb-4">Add New {adminTab.slice(0, -1)}</h2>
                             <div className="grid md:grid-cols-3 gap-4 mb-4">
-                                <input placeholder="Full Name" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400"/>
+                                <input placeholder="Full Name" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400 transition-all"/>
                                 <select value={userForm.class_id} onChange={e => setUserForm({...userForm, class_id: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400">
                                     <option value="">-- Class --</option>
                                     {classes.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>{isAutoID ? 'Auto' : 'Manual'}</button>
-                                    {isAutoID && <button onClick={() => { if (!userForm.name) return alert("Name needed!"); const rnd = Math.floor(Math.random()*900)+100; const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,''); setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`})); }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200"><RefreshCw size={18}/></button>}
+                                    {isAutoID && <button onClick={() => { if (!userForm.name) return alert("Name needed!"); const rnd = Math.floor(Math.random()*900)+100; const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,''); setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`})); }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200 hover:scale-110 transition-transform"><RefreshCw size={18}/></button>}
                                 </div>
                             </div>
                             <div className="grid md:grid-cols-2 gap-4 mb-4">
                                 <input placeholder="Username" value={userForm.username} onChange={e => !isAutoID && setUserForm({...userForm, username: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
                                 <input placeholder="Password" value={userForm.password} onChange={e => !isAutoID && setUserForm({...userForm, password: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
                             </div>
-                            <button onClick={handleSaveUser} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-700">SAVE</button>
+                            <button onClick={handleSaveUser} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-600 transform active:scale-95 transition-all">SAVE USER</button>
                         </div>
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 overflow-x-auto">
                             {filteredUsers.length > 0 ? (
                                 <table className="w-full text-left min-w-[600px]">
                                     <thead className="bg-yellow-50"><tr><th className="p-3">Name</th><th className="p-3">Class</th><th className="p-3">User</th><th className="p-3">Act</th></tr></thead>
                                     <tbody>{filteredUsers.map(u => (
-                                        <tr key={u._id} className="border-b"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded"><Trash2 size={16}/></button></td></tr>
+                                        <tr key={u._id} className="border-b hover:bg-yellow-50 transition-colors"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></td></tr>
                                     ))}</tbody>
                                 </table>
                             ) : <FunEmptyState message="No users found." />}
                         </div>
                     </div>
                 )}
+                {/* ... (Other Admin Tabs similar pattern) ... */}
                 {adminTab === 'classes' && (
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 max-w-lg">
-                        <div className="flex gap-2 mb-6"><button onClick={handleAddClass} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow hover:bg-green-700 flex justify-center items-center gap-2"><Plus/> Add New Class</button></div>
+                        <div className="flex gap-2 mb-6"><button onClick={handleAddClass} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow hover:bg-green-600 flex justify-center items-center gap-2 transform active:scale-95 transition-all"><Plus/> Add New Class</button></div>
                         {classes.length > 0 ? (
-                            <div className="space-y-2">{classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}</div>
+                            <div className="space-y-2">{classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm hover:scale-105 transition-transform">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}</div>
                         ) : <FunEmptyState message="No classes added yet!" />}
                     </div>
                 )}
@@ -599,7 +604,7 @@ const App = () => {
                             {classes.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         {selectedClassForWords && (
-                            <div className="animate-in fade-in">
+                            <div className="animate-slide-in">
                                 <div className={`p-4 rounded-2xl mb-6 ${editingWordId ? 'bg-orange-50 border-2 border-orange-200' : ''}`}>
                                     <div className="flex gap-2 mb-4">
                                         <input placeholder="Type Word..." value={newWordForm.word} onChange={e => setNewWordForm({...newWordForm, word: e.target.value})} className="flex-1 bg-white border-2 border-yellow-100 p-3 rounded-xl text-lg font-bold outline-none focus:border-yellow-400"/>
@@ -613,21 +618,17 @@ const App = () => {
                                         <input placeholder="Origin" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-gray-50 p-3 rounded-xl md:col-span-2"/>
                                     </div>
                                     <div className="flex gap-2">
-                                        <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`flex-1 text-white font-bold py-4 rounded-xl shadow-lg ${editingWordId ? 'bg-orange-500' : 'bg-green-600'}`}>
+                                        <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`flex-1 text-white font-bold py-4 rounded-xl shadow-lg transform active:scale-95 transition-all ${editingWordId ? 'bg-orange-500' : 'bg-green-500 hover:bg-green-600'}`}>
                                             {editingWordId ? 'UPDATE' : 'ADD'}
                                         </button>
-                                        {editingWordId && (
-                                            <button onClick={cancelEditing} className="bg-gray-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:bg-gray-600">
-                                                CANCEL
-                                            </button>
-                                        )}
+                                        {editingWordId && <button onClick={cancelEditing} className="bg-gray-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:bg-gray-600">CANCEL</button>}
                                     </div>
                                 </div>
                                 <div className="space-y-2">
                                     {(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (
-                                        <div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100">
+                                        <div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100 hover:scale-[1.01] transition-transform">
                                             <div><span className="font-bold text-yellow-900">{w.word}</span><p className="text-xs text-yellow-700 truncate w-64">{w.definition}</p></div>
-                                            <div className="flex gap-2"><button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded"><Edit3 size={16}/></button><button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="bg-white text-red-400 p-2 rounded"><Trash2 size={16}/></button></div>
+                                            <div className="flex gap-2"><button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Edit3 size={16}/></button><button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="bg-white text-red-400 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></div>
                                         </div>
                                     ))}
                                 </div>
@@ -642,12 +643,12 @@ const App = () => {
                             {classes.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         {adminSelectedTestClass && (
-                            <div>
+                            <div className="animate-slide-in">
                                 <div className="grid md:grid-cols-2 gap-6 mb-6">
                                     <div><label className="block font-bold mb-2">Mode</label><select className="w-full p-3 border rounded-lg" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}><option value="test_standard">Standard</option><option value="test_rush">Rush Hour</option><option value="test_unscramble">Unscramble</option><option value="test_quiz">Quiz</option></select></div>
                                     <div><label className="block font-bold mb-2">Timer</label>{sessionConfig.mode === 'test_rush' ? <input type="number" className="w-full p-3 border rounded-lg" value={sessionConfig.globalTimer} onChange={e=>setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/> : <input type="number" className="w-full p-3 border rounded-lg" value={sessionConfig.timerPerWord} onChange={e=>setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>}</div>
                                 </div>
-                                <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} className={`w-full py-6 rounded-2xl font-black text-2xl shadow-xl ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>{testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}</button>
+                                <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} className={`w-full py-6 rounded-2xl font-black text-2xl shadow-xl transform active:scale-95 transition-all ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>{testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}</button>
                             </div>
                         )}
                     </div>
@@ -655,7 +656,7 @@ const App = () => {
                 {adminTab === 'results' && (
                     <div className="space-y-4">
                         {results.length > 0 ? results.map((r, i) => (
-                            <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
+                            <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center hover:scale-105 transition-transform">
                                 <div className="flex items-center gap-3"><div className="bg-green-100 p-2 rounded-full"><Trophy size={20} className="text-green-600"/></div><div><span className="font-bold text-gray-800">{r.student}</span> <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-500">{r.class_id}</span></div></div>
                                 <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
                                 <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
@@ -683,7 +684,7 @@ const App = () => {
                 <button onClick={() => setTeacherTab('test_control')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'test_control' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Test Control</button>
                 <button onClick={() => setTeacherTab('results')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'results' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Results</button>
             </div>
-            <div className="max-w-4xl mx-auto grid gap-6">
+            <div className="max-w-4xl mx-auto grid gap-6 animate-slide-in">
                 {teacherTab === 'test_control' && (
                 <div className="bg-white p-8 rounded-[2rem] shadow-xl border-b-8 border-green-600">
                     <h3 className="text-2xl font-black mb-6 text-green-800 flex items-center gap-2"><Trophy className="text-yellow-500"/> Class Control</h3>
@@ -691,7 +692,7 @@ const App = () => {
                          <div><label className="font-bold block mb-2">Mode</label><select className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}><option value="test_standard">Standard</option><option value="test_rush">Rush Hour</option><option value="test_unscramble">Unscramble</option><option value="test_quiz">Quiz</option></select></div>
                          <div><label className="font-bold block mb-2">Timer</label><input type="number" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.mode === 'test_rush' ? sessionConfig.globalTimer : sessionConfig.timerPerWord} onChange={e=>setSessionConfig(prev => sessionConfig.mode === 'test_rush' ? {...prev, globalTimer: parseInt(e.target.value)} : {...prev, timerPerWord: parseInt(e.target.value)})}/></div>
                   </div>
-                  <button onClick={() => updateSession(currentUser.class_id, !session.active)} className={`w-full py-4 rounded-xl font-black text-lg transition-all ${session.active ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white hover:bg-green-600'}`}>
+                  <button onClick={() => updateSession(currentUser.class_id, !session.active)} className={`w-full py-4 rounded-xl font-black text-lg transition-all transform active:scale-95 ${session.active ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white hover:bg-green-600'}`}>
                       {session.active ? 'STOP TEST' : 'START TEST'}
                   </button>
               </div>
@@ -699,7 +700,7 @@ const App = () => {
               {teacherTab === 'results' && (
                   <div className="space-y-4">
                         {results.filter(r => r.class === currentUser.class_id).map((r, i) => (
-                          <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
+                          <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center hover:scale-105 transition-transform">
                               <div><span className="font-bold text-gray-800">{r.student}</span></div>
                               <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
                               <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
@@ -713,27 +714,28 @@ const App = () => {
   }
 
   if (activeView === 'student_dash') return (
-      <div className="min-h-screen bg-yellow-50 p-6 flex flex-col items-center font-sans">
-        <header className="w-full max-w-2xl flex justify-between items-center mb-8">
-            <div className="flex items-center gap-4"><img src={logo} alt="Logo" className="w-14 h-14 rounded-full border-4 border-white shadow-md" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><div className="leading-tight"><h1 className="text-2xl font-black text-green-900">Hi, {currentUser.name.split(' ')[0]}!</h1><p className="text-yellow-600 font-bold tracking-widest text-xs uppercase">Student • {currentUser.class_id}</p></div></div>
+      <div className="min-h-screen bg-yellow-50 p-6 flex flex-col items-center font-sans overflow-hidden relative">
+        <BackgroundBees />
+        <header className="w-full max-w-2xl flex justify-between items-center mb-8 relative z-10">
+            <div className="flex items-center gap-4"><img src={logo} alt="Logo" className="w-14 h-14 rounded-full border-4 border-white shadow-md animate-pop" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><div className="leading-tight"><h1 className="text-2xl font-black text-green-900">Hi, {currentUser.name.split(' ')[0]}!</h1><p className="text-yellow-600 font-bold tracking-widest text-xs uppercase">Student • {currentUser.class_id}</p></div></div>
             <button onClick={handleLogout} className="bg-white text-red-500 px-4 py-2 rounded-xl font-bold shadow-sm hover:bg-red-50">Log Out</button>
         </header>
-        <div className="grid gap-6 w-full max-w-md">
-            <div className="bg-white p-6 rounded-[2rem] shadow-lg border-b-8 border-green-500 relative overflow-hidden group">
+        <div className="grid gap-6 w-full max-w-md relative z-10 animate-slide-in">
+            <div className="bg-white p-6 rounded-[2rem] shadow-lg border-b-8 border-green-500 relative overflow-hidden group hover:scale-[1.02] transition-transform duration-300">
                 <div className="absolute -right-4 -top-4 text-green-100 opacity-50 group-hover:scale-110 transition-transform"><BookOpen size={100}/></div>
                 <h2 className="text-2xl font-black text-green-800 relative z-10">Practice Mode</h2>
                 <div className="mt-4 flex items-center gap-2 relative z-10">
                     <Clock size={16} className="text-green-600"/><select className="bg-green-50 rounded-lg p-1 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}><option value={0}>No Timer</option><option value={10}>10s</option><option value={30}>30s</option></select>
                 </div>
-                <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700 relative z-10">Start Studying</button>
+                <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-600 transform active:scale-95 transition-all relative z-10">Start Studying</button>
             </div>
-            <div className="bg-gradient-to-br from-purple-500 to-indigo-600 p-6 rounded-[2rem] shadow-lg border-b-8 border-indigo-800 text-white">
+            <div className="bg-gradient-to-br from-purple-500 to-indigo-600 p-6 rounded-[2rem] shadow-lg border-b-8 border-indigo-800 text-white hover:scale-[1.02] transition-transform duration-300">
                 <h2 className="text-2xl font-black mb-4 flex items-center gap-2"><Gamepad2/> Fun Games</h2>
                 <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => startSession('unscramble')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🧩 Unscramble</button>
-                    <button onClick={() => startSession('quiz')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">❓ Quiz</button>
-                    <button onClick={() => startSession('blanks')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🔡 Blanks</button>
-                    <button onClick={() => startSession('origin')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🌍 Origin</button>
+                    <button onClick={() => startSession('unscramble')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm transform active:scale-95 transition-all">🧩 Unscramble</button>
+                    <button onClick={() => startSession('quiz')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm transform active:scale-95 transition-all">❓ Quiz</button>
+                    <button onClick={() => startSession('blanks')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm transform active:scale-95 transition-all">🔡 Blanks</button>
+                    <button onClick={() => startSession('origin')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm transform active:scale-95 transition-all">🌍 Origin</button>
                 </div>
             </div>
             <button onClick={() => activeSession.active && startSession('test_live')} className={`p-6 rounded-[2rem] shadow-lg border-b-8 text-left transition-transform ${activeSession.active ? 'bg-yellow-400 border-yellow-600 hover:scale-[1.02] cursor-pointer' : 'bg-gray-200 border-gray-300 grayscale cursor-not-allowed'}`}>
@@ -752,34 +754,38 @@ const App = () => {
     const maskedWord = currentWord?.word.replace(/[aeiou]/gi, '_');
      
     return (
-        <div className="min-h-screen bg-green-600 flex flex-col items-center justify-center p-6 relative font-sans">
+        <div className={`min-h-screen flex flex-col items-center justify-center p-6 relative font-sans transition-colors duration-500 ${feedbackState === 'correct' ? 'bg-green-500' : feedbackState === 'wrong' ? 'bg-red-500' : 'bg-green-600'}`}>
             <div className="absolute inset-0 opacity-10 pointer-events-none" style={{backgroundImage: 'radial-gradient(circle, #ffffff 2px, transparent 2px)', backgroundSize: '24px 24px'}}></div>
+            {/* Feedback Overlay Animation */}
+            {feedbackState === 'correct' && <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"><div className="text-9xl animate-pop">🎉</div></div>}
+            {feedbackState === 'wrong' && <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"><div className="text-9xl animate-shake">❌</div></div>}
+
             <button onClick={() => setActiveView('student_dash')} className="absolute top-6 right-6 text-white hover:scale-110 transition-transform"><X size={32}/></button>
-            <div className="bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-2xl relative z-10 text-center border-4 border-yellow-400">
+            <div className={`bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-2xl relative z-10 text-center border-4 border-yellow-400 ${feedbackState === 'wrong' ? 'animate-shake' : ''}`}>
                 <div className="flex justify-between items-center mb-6 text-gray-400 text-xs font-bold tracking-widest">
                     <span className="uppercase text-green-800 bg-green-100 px-2 py-1 rounded">{game.mode} • {game.gameType}</span>
                     <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full font-mono">{game.timeLeft > 0 ? `${game.timeLeft}s` : '∞'}</span>
                 </div>
                 {game.gameType === 'spelling' && (
-                    <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group">
+                    <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group active:scale-95">
                         <Volume2 size={48} className="text-yellow-900 group-hover:rotate-12 transition-transform"/>
                     </button>
                 )}
-                {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm">{scrambled}</div>}
-                {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm">{maskedWord}</div>}
-                {(game.gameType === 'quiz' || game.gameType === 'origin') && <div className="text-3xl font-black text-gray-800 mb-8">"{currentWord.word}"</div>}
+                {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop">{scrambled}</div>}
+                {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop">{maskedWord}</div>}
+                {(game.gameType === 'quiz' || game.gameType === 'origin') && <div className="text-3xl font-black text-gray-800 mb-8 animate-slide-in">"{currentWord.word}"</div>}
                 {(game.gameType === 'quiz' || game.gameType === 'origin') ? (
                     <div className="grid gap-3">
                         {quizOptions.map((opt, i) => (
                             <button key={i} onClick={() => { setGame({...game, input: opt}); setTimeout(() => submitWord(), 100); }} 
-                                className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all">{opt}</button>
+                                className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95">{opt}</button>
                         ))}
                     </div>
                 ) : (
                     <>
                         <input autoFocus type="text" value={game.input} onChange={e => setGame({...game, input: e.target.value})} onKeyDown={e => e.key === 'Enter' && submitWord()}
                             className="w-full text-center text-5xl font-black text-green-900 border-b-4 border-green-200 focus:border-yellow-400 outline-none pb-4 mb-8 uppercase placeholder-gray-200 tracking-wider" placeholder="TYPE HERE"/>
-                        <button onClick={() => submitWord()} className="w-full bg-green-600 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-700 transform hover:-translate-y-1 transition-all">SUBMIT ANSWER</button>
+                        <button onClick={() => submitWord()} className="w-full bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 transform hover:-translate-y-1 active:translate-y-0 transition-all">SUBMIT ANSWER</button>
                     </>
                 )}
                 {game.mode === 'practice' && (
