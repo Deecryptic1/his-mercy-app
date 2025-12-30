@@ -1,0 +1,874 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Shield, User, LogOut, Trash2, 
+  Volume2, X, Eye, EyeOff, Edit3, 
+  BookOpen, Trophy, Clock, Gamepad2, 
+  Sparkles, Plus, RefreshCw, Key
+} from 'lucide-react';
+import logo from './logo.jpg'; 
+
+const App = () => {
+  // --- SECURITY ---
+  useEffect(() => {
+    const handleContext = (e) => e.preventDefault();
+    document.addEventListener('contextmenu', handleContext);
+    return () => document.removeEventListener('contextmenu', handleContext);
+  }, []);
+
+  // --- VOICE ENGINE ---
+  const [selectedVoice, setSelectedVoice] = useState(null);
+  useEffect(() => {
+    const loadVoices = () => {
+      const available = window.speechSynthesis.getVoices();
+      const profile = available.find(v => 
+        (v.name.includes('UK') || v.name.includes('Great Britain')) && v.name.includes('Female')
+      ) || available.find(v => v.lang === 'en-GB') || available[0];
+      setSelectedVoice(profile);
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, []);
+
+  const speak = (text) => {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    if (selectedVoice) u.voice = selectedVoice;
+    u.pitch = 1.1; u.rate = 0.9;
+    window.speechSynthesis.speak(u);
+  };
+
+  const API_URL = 'http://localhost:5000/api';
+  
+  // --- STATE ---
+  const [currentUser, setCurrentUser] = useState(null);
+  const [activeView, setActiveView] = useState('login'); 
+  const [adminTab, setAdminTab] = useState('students'); 
+  const [teacherTab, setTeacherTab] = useState('test_control');
+
+  // DATABASE DATA (Initialized empty, populated via API)
+  const [classes, setClasses] = useState([]); 
+  const [users, setUsers] = useState([]); 
+  const [wordBank, setWordBank] = useState({}); 
+  const [results, setResults] = useState([]); 
+  const [activeSession, setActiveSession] = useState({ active: false }); // Student Poll State
+
+  // Forms
+  const [loginForm, setLoginForm] = useState({ username: '', password: '', role: 'student' });
+  const [showPassword, setShowPassword] = useState(false);
+  const [userForm, setUserForm] = useState({ name: '', username: '', password: '', role: 'student', class_id: '' });
+  const [isAutoID, setIsAutoID] = useState(true); 
+  const [newWordForm, setNewWordForm] = useState({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
+  const [editingWordId, setEditingWordId] = useState(null); 
+  
+  const [selectedClassForWords, setSelectedClassForWords] = useState('');
+  const [adminSelectedTestClass, setAdminSelectedTestClass] = useState(''); 
+  const [practiceTimer, setPracticeTimer] = useState(0);
+  const [loadingAI, setLoadingAI] = useState(false); 
+
+  // Exam Config (Teacher/Admin)
+  const [sessionConfig, setSessionConfig] = useState({ mode: 'test_standard', globalTimer: 60, timerPerWord: 0 });
+  
+  // Test Session State (For local view logic)
+  const [testSessions, setTestSessions] = useState({}); 
+
+  const [game, setGame] = useState({ 
+    active: false, words: [], index: 0, score: 0, input: '', 
+    mode: 'practice', gameType: 'spelling', timeLeft: 0 
+  });
+
+  // --- DATA LOADING & PERSISTENCE ---
+  
+  const refreshData = () => {
+      // Fetch Classes from DB
+      fetch(`${API_URL}/classes`)
+        .then(r => r.json())
+        .then(data => setClasses(data.map(d => d.name).sort()))
+        .catch(e => console.log("Classes not loaded"));
+
+      // Fetch Results from DB
+      fetch(`${API_URL}/results`)
+        .then(r => r.json())
+        .then(setResults)
+        .catch(e => console.log("Results not loaded"));
+
+      // Fetch Users if Admin
+      if(currentUser?.role === 'admin') {
+          fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers);
+      }
+  };
+
+  useEffect(() => {
+    // 1. Check Login Session
+    const savedUser = localStorage.getItem('hms_user_session');
+    if (savedUser) {
+        const parsedUser = JSON.parse(savedUser);
+        setCurrentUser(parsedUser);
+        setActiveView(parsedUser.role === 'student' ? 'student_dash' : parsedUser.role === 'teacher' ? 'teacher_dash' : 'admin_dash');
+    }
+    // 2. Load Data from DB
+    refreshData();
+  }, []);
+
+  // Poll for Live Tests (Student Only)
+  useEffect(() => {
+      let poller;
+      if (currentUser?.role === 'student' && activeView === 'student_dash') {
+          poller = setInterval(() => {
+              fetch(`${API_URL}/session/${currentUser.class_id}`)
+                  .then(r => r.json())
+                  .then(data => setActiveSession(data));
+          }, 3000); 
+      }
+      return () => clearInterval(poller);
+  }, [currentUser, activeView]);
+
+  useEffect(() => {
+    if (currentUser) refreshData();
+    
+    // Load Words for specific contexts
+    const targetClass = currentUser?.class_id || selectedClassForWords || adminSelectedTestClass;
+    if (targetClass) {
+        fetch(`${API_URL}/words/${targetClass}`).then(r => r.json())
+        .then(data => setWordBank(prev => ({...prev, [targetClass]: data})))
+        .catch(console.error);
+    }
+  }, [currentUser, selectedClassForWords, adminSelectedTestClass]);
+
+  // --- DICTIONARY ---
+  const fetchRealDictionaryData = async () => {
+    const word = newWordForm.word.trim();
+    if(!word) return alert("Please type a word first!");
+    
+    setLoadingAI(true);
+    try {
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+        if (!res.ok) throw new Error("Word not found");
+        
+        const data = await res.json();
+        const entry = data[0];
+        const meaning = entry.meanings[0];
+        
+        setNewWordForm(prev => ({
+            ...prev,
+            definition: meaning.definitions[0]?.definition || "Definition not found.",
+            usage: meaning.definitions.find(d => d.example)?.example || `Please use "${word}" in a sentence.`,
+            synonyms: meaning.synonyms.slice(0, 3).join(", ") || "None found",
+            antonyms: meaning.antonyms.slice(0, 3).join(", ") || "None found",
+            etymology: entry.origin || `Origin of ${word}`
+        }));
+        alert("✨ Data auto-filled!");
+    } catch (error) {
+        alert("⚠️ Word not found in global dictionary. Please fill manually.");
+    } finally {
+        setLoadingAI(false);
+    }
+  };
+
+  // --- USER MANAGEMENT ---
+  const handleResetPassword = async (userId, userName) => {
+      const newPass = prompt(`Enter NEW Password for ${userName}:`);
+      if (!newPass) return;
+      try {
+          const res = await fetch(`${API_URL}/users/${userId}/reset-password`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ newPassword: newPass })
+          });
+          if (res.ok) alert(`Success! Password for ${userName} updated.`);
+          else alert("Failed to reset password.");
+      } catch (e) { alert("Server Error."); }
+  };
+
+  const handleDeleteUser = async (userId, userName) => {
+      if(!window.confirm(`Are you sure you want to delete ${userName}? This cannot be undone.`)) return;
+      try {
+          const res = await fetch(`${API_URL}/users/${userId}`, { method: 'DELETE' });
+          if(res.ok) {
+              setUsers(prev => prev.filter(u => u._id !== userId));
+              alert("User Deleted.");
+          } else { alert("Failed to delete user."); }
+      } catch(e) { alert("Connection Error."); }
+  };
+
+  const handleSaveUser = async () => {
+    if (!userForm.name || !userForm.username || !userForm.password) return alert("All fields required");
+    try {
+        const res = await fetch(`${API_URL}/users`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...userForm, role: adminTab.slice(0,-1) }) 
+        });
+        if (res.ok) {
+            alert("User Saved!");
+            setUserForm({ name: '', username: '', password: '', role: 'student', class_id: '' });
+            refreshData(); // Fetch from DB immediately
+        } else {
+            alert("Save Failed.");
+        }
+    } catch (e) { alert("Connection Error"); }
+  };
+
+  // --- AUTH ---
+  const handleLogin = async () => {
+    if (loginForm.username === 'admin' && loginForm.password === 'admin') {
+      const masterUser = { _id: 'master', role: 'admin', name: 'Master Admin' };
+      setCurrentUser(masterUser);
+      localStorage.setItem('hms_user_session', JSON.stringify(masterUser));
+      setActiveView('admin_dash');
+      refreshData();
+      return;
+    }
+    try {
+        const response = await fetch(`${API_URL}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(loginForm)
+        });
+        const data = await response.json();
+        if (response.ok) {
+            setCurrentUser(data);
+            localStorage.setItem('hms_user_session', JSON.stringify(data));
+            setActiveView(data.role === 'student' ? 'student_dash' : data.role === 'teacher' ? 'teacher_dash' : 'admin_dash');
+            setLoginForm({ username: '', password: '', role: 'student' });
+            refreshData();
+        } else {
+            alert("Login Failed: " + data.message);
+        }
+    } catch (error) {
+        alert("Server Error. Is the backend running?");
+    }
+  };
+
+  const handleLogout = () => {
+      setCurrentUser(null);
+      setActiveView('login');
+      localStorage.removeItem('hms_user_session');
+  };
+
+  // --- CLASS MANAGEMENT (DB SYNCED) ---
+  const handleAddClass = async () => {
+      const name = prompt("Enter new Class Name (e.g., Year 7):");
+      if(!name) return;
+      
+      const res = await fetch(`${API_URL}/classes`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ name })
+      });
+      
+      if(res.ok) refreshData();
+      else alert("Class might already exist or server error.");
+  };
+  
+  const handleDeleteClass = async (name) => {
+      if(!window.confirm(`Delete ${name}?`)) return;
+      
+      // Find ID first (Frontend mapping)
+      const all = await fetch(`${API_URL}/classes`).then(r => r.json());
+      const target = all.find(c => c.name === name);
+      
+      if(target) {
+          await fetch(`${API_URL}/classes/${target._id}`, { method: 'DELETE' });
+          refreshData();
+      }
+  };
+
+  // --- WORD MANAGEMENT (DB SYNCED) ---
+  const startEditingWord = (wordObj) => {
+      setNewWordForm({
+          word: wordObj.word,
+          definition: wordObj.definition,
+          synonyms: wordObj.synonyms,
+          antonyms: wordObj.antonyms,
+          usage: wordObj.usage,
+          etymology: wordObj.etymology
+      });
+      setEditingWordId(wordObj._id); 
+      document.querySelector('.animate-in')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const cancelEditing = () => {
+      setEditingWordId(null);
+      setNewWordForm({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
+  };
+
+  const handleSaveWord = async (targetClass, source) => {
+    if (!targetClass || !newWordForm.word) return alert("Select Class & Word");
+    
+    const entry = { ...newWordForm, class_id: targetClass, source };
+    
+    try {
+        let res;
+        const url = editingWordId ? `${API_URL}/words/${editingWordId}` : `${API_URL}/words`;
+        const method = editingWordId ? 'PUT' : 'POST';
+
+        res = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(entry)
+        });
+
+        if (res.ok) {
+            const savedWord = await res.json();
+            setWordBank(prev => {
+                const currentList = prev[targetClass] || [];
+                if (editingWordId) {
+                    return { ...prev, [targetClass]: currentList.map(w => w._id === editingWordId ? savedWord : w) };
+                } else {
+                    return { ...prev, [targetClass]: [...currentList, savedWord] };
+                }
+            });
+            setNewWordForm({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
+            setEditingWordId(null);
+            alert(editingWordId ? "Word Updated!" : "Word Added!");
+        }
+    } catch (e) { alert("Failed to save word"); }
+  };
+
+  const handleDeleteWord = async (targetClass, id, userRole) => {
+      const word = wordBank[targetClass].find(w => w._id === id);
+      if (userRole === 'teacher' && word.source === 'admin') return alert("Permission Denied: Teachers cannot remove Admin words.");
+      
+      try {
+          await fetch(`${API_URL}/words/${id}`, { method: 'DELETE' });
+          setWordBank(prev => ({ ...prev, [targetClass]: prev[targetClass].filter(w => w._id !== id) }));
+      } catch (e) { alert("Failed to delete word"); }
+  };
+
+  // --- LIVE EXAM CONTROL ---
+  const updateSession = async (targetClass, isActive) => {
+      await fetch(`${API_URL}/session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+              class_id: targetClass, 
+              active: isActive, 
+              ...sessionConfig 
+          })
+      });
+      
+      // Update local state for immediate feedback UI
+      setTestSessions(prev => ({
+          ...prev, 
+          [targetClass]: { active: isActive, ...sessionConfig }
+      }));
+      
+      alert(isActive ? "Test Activated!" : "Test Stopped.");
+  };
+
+  // --- GAME LOGIC ---
+  const startSession = (origin) => {
+    const myClass = currentUser.class_id;
+    const words = wordBank[myClass] || [];
+    if (words.length === 0) return alert("No words found.");
+
+    let mode, gameType, timer;
+    let sessionWords = words;
+
+    if (origin === 'test_live') {
+        if (!activeSession.active) return alert("Test Locked");
+        mode = activeSession.mode; 
+        gameType = mode.includes('rush') ? 'spelling' : (mode.split('_')[1] || 'spelling');
+        timer = mode === 'test_rush' ? activeSession.globalTimer : activeSession.timerPerWord;
+        sessionWords = words.filter(w => w.source === 'admin'); 
+    } else if (origin === 'practice') {
+        mode = 'practice';
+        gameType = 'spelling';
+        timer = practiceTimer;
+    } else {
+        mode = 'fun';
+        gameType = origin; 
+        timer = 0;
+    }
+
+    if (sessionWords.length === 0) return alert("No words available.");
+
+    setGame({
+      active: true,
+      words: sessionWords.sort(() => Math.random() - 0.5),
+      index: 0, score: 0, input: '', mode, gameType, timeLeft: timer
+    });
+    setActiveView('game_interface');
+  };
+
+  const submitWord = (forcedFail = false) => {
+    const currentWord = game.words[game.index];
+    let isCorrect = false;
+    if (!forcedFail) {
+        const cleanInput = game.input.trim().toLowerCase();
+        const cleanWord = currentWord.word.toLowerCase();
+        if (game.gameType === 'quiz') isCorrect = game.input === currentWord.definition;
+        else if (game.gameType === 'origin') isCorrect = game.input === currentWord.etymology;
+        else isCorrect = cleanInput === cleanWord;
+    }
+    if (game.mode === 'practice' || game.mode === 'fun') speak(isCorrect ? "Correct" : "Incorrect");
+
+    const nextScore = isCorrect ? game.score + 1 : game.score;
+    const nextIdx = game.index + 1;
+
+    if (game.mode.includes('rush')) {
+        if (nextIdx >= game.words.length) finishGame(nextScore);
+        else {
+             setGame(prev => ({ ...prev, index: nextIdx, score: nextScore, input: '' }));
+             if(game.gameType === 'spelling') setTimeout(() => speak(game.words[nextIdx].word), 500);
+        }
+    } else {
+        if (nextIdx >= game.words.length) finishGame(nextScore);
+        else {
+            let nextTime = 0;
+            if (game.mode.includes('test')) nextTime = activeSession.timerPerWord;
+            else nextTime = practiceTimer;
+            
+            setGame(prev => ({ ...prev, index: nextIdx, score: nextScore, input: '', timeLeft: nextTime }));
+            if(game.gameType === 'spelling') setTimeout(() => speak(game.words[nextIdx].word), 800);
+        }
+    }
+  };
+
+  const finishGame = async (finalScore) => {
+    setGame(prev => ({...prev, active: false}));
+    if (game.mode.includes('test')) {
+        // Save to DB
+        await fetch(`${API_URL}/results`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                student: currentUser.name, class_id: currentUser.class_id, score: finalScore, 
+                total: game.words.length, mode: game.mode, date: new Date().toLocaleString()
+            })
+        });
+        setResults(prev => [...prev, {
+            student: currentUser.name, class: currentUser.class_id, score: finalScore, 
+            total: game.words.length, mode: game.mode, date: new Date().toLocaleString()
+        }]);
+    }
+    alert(`Complete! Score: ${finalScore}/${game.words.length}`);
+    setActiveView('student_dash');
+  };
+
+  useEffect(() => {
+    let interval;
+    if (game.active && game.timeLeft > 0) {
+      interval = setInterval(() => {
+        setGame(prev => {
+          if (prev.timeLeft <= 1) {
+             if (prev.mode.includes('rush')) { finishGame(prev.score); return { ...prev, active: false }; } 
+             else { submitWord(true); return { ...prev, timeLeft: 0 }; }
+          }
+          return { ...prev, timeLeft: prev.timeLeft - 1 };
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [game.active, game.timeLeft]);
+
+  const currentWord = game.words[game.index];
+  const quizOptions = useMemo(() => {
+    if (!currentWord || (game.gameType !== 'quiz' && game.gameType !== 'origin')) return [];
+    const field = game.gameType === 'quiz' ? 'definition' : 'etymology';
+    const otherWords = game.words.filter(w => w._id !== currentWord._id).slice(0, 3);
+    return [currentWord[field], ...otherWords.map(w => w[field] || "N/A")].sort(() => Math.random() - 0.5);
+  }, [currentWord, game.gameType, game.words]);
+
+  const FunEmptyState = ({ message }) => (
+      <div className="text-center p-8 border-2 border-dashed border-yellow-300 rounded-3xl bg-yellow-50">
+          <div className="text-6xl mb-4 animate-bounce">🐝</div>
+          <h3 className="text-xl font-bold text-yellow-800 mb-2">The Hive is Empty!</h3>
+          <p className="text-yellow-700">{message}</p>
+      </div>
+  );
+
+  // --- VIEWS ---
+  if (activeView === 'login') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-yellow-300 via-green-400 to-green-600 opacity-90"></div>
+        <div className="absolute inset-0 opacity-20" style={{backgroundImage: 'radial-gradient(#fff 2px, transparent 2px)', backgroundSize: '30px 30px'}}></div>
+        <div className="bg-white/95 backdrop-blur-xl p-8 md:p-12 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.2)] w-full max-w-md border-4 border-white relative z-10">
+            <div className="flex flex-col items-center mb-8">
+                <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mb-4 shadow-xl border-4 border-white overflow-hidden transform hover:scale-110 transition-transform">
+                   <img src={logo} alt="Logo" className="w-full h-full object-cover" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}} />
+                </div>
+                <h1 className="text-4xl font-black text-green-800 text-center uppercase tracking-tighter">un<span className="text-yellow-500">BEE</span>lievable<br/><span className="text-2xl">Spellers</span></h1>
+                <p className="text-green-600 font-bold mt-2 text-sm tracking-widest">HIS MERCY PRIVATE SCHOOL</p>
+            </div>
+            <div className="flex bg-gray-100 p-1 rounded-full mb-6 shadow-inner">
+                {['student', 'teacher', 'admin'].map(r => (
+                    <button key={r} onClick={() => setLoginForm({...loginForm, role: r})}
+                        className={`flex-1 py-3 rounded-full font-black text-sm capitalize transition-all ${loginForm.role === r ? 'bg-yellow-400 text-yellow-900 shadow-md transform scale-105' : 'text-gray-400 hover:text-gray-600'}`}>
+                        {r}
+                    </button>
+                ))}
+            </div>
+            <div className="space-y-4">
+                <div className="relative group">
+                    <User className="absolute left-4 top-3.5 text-gray-400 group-focus-within:text-yellow-500 transition-colors" size={20}/>
+                    <input type="text" placeholder="Username" className="w-full bg-gray-50 border-2 border-gray-100 pl-12 p-3 rounded-2xl font-bold outline-none focus:border-yellow-400 focus:bg-white transition-all text-gray-700"
+                        value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} />
+                </div>
+                <div className="relative group">
+                    <div className="absolute left-4 top-3.5 text-gray-400 group-focus-within:text-yellow-500 pointer-events-none"><Key size={20}/></div>
+                    <input type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-gray-50 border-2 border-gray-100 pl-12 p-3 rounded-2xl font-bold outline-none focus:border-yellow-400 focus:bg-white transition-all text-gray-700"
+                        value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
+                    <button onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-3.5 text-gray-400 hover:text-green-600">
+                        {showPassword ? <EyeOff size={20}/> : <Eye size={20}/>}
+                    </button>
+                </div>
+                <button onClick={handleLogin} className="w-full bg-green-600 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-700 hover:scale-[1.02] active:scale-95 transition-all text-lg tracking-wide">ENTER THE HIVE</button>
+            </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeView === 'admin_dash') {
+    const filteredUsers = users.filter(u => u.role === adminTab.slice(0, -1));
+    return (
+      <div className="min-h-screen bg-yellow-50 flex flex-col font-sans">
+        <header className="bg-white border-b border-yellow-200 p-4 flex justify-between items-center sticky top-0 z-20 shadow-sm">
+            <div className="flex items-center gap-2"><img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><h1 className="text-xl font-black text-yellow-900">Queen Bee Portal</h1></div>
+            <button onClick={handleLogout} className="text-red-500 font-bold flex gap-2 hover:bg-red-50 px-4 py-2 rounded-xl transition"><LogOut size={18}/> Exit</button>
+        </header>
+        <div className="flex flex-1 overflow-hidden">
+            <nav className="w-64 bg-white border-r border-yellow-200 p-4 hidden md:flex flex-col gap-2">
+                {['students', 'teachers', 'classes', 'curriculum', 'exam_control', 'results'].map(tab => (
+                    <button key={tab} onClick={() => setAdminTab(tab)} className={`w-full text-left p-3 rounded-xl font-bold capitalize ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md' : 'text-gray-500 hover:bg-yellow-50'}`}>
+                        {tab.replace('_', ' ')}
+                    </button>
+                ))}
+            </nav>
+            <main className="flex-1 p-8 overflow-y-auto">
+                {['students', 'teachers'].includes(adminTab) && (
+                    <div className="space-y-6">
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
+                            <h2 className="font-bold text-lg text-yellow-900 mb-4">Add New {adminTab.slice(0, -1)}</h2>
+                            <div className="grid md:grid-cols-3 gap-4 mb-4">
+                                <input placeholder="Full Name" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400"/>
+                                <select value={userForm.class_id} onChange={e => setUserForm({...userForm, class_id: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400">
+                                    <option value="">-- Class --</option>
+                                    {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>
+                                        {isAutoID ? 'Auto Gen' : 'Manual'}
+                                    </button>
+                                    {isAutoID && <button onClick={() => {
+                                        if (!userForm.name) return alert("Name needed!");
+                                        const rnd = Math.floor(Math.random()*900)+100;
+                                        const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,'');
+                                        setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`}));
+                                    }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200"><RefreshCw size={18}/></button>}
+                                </div>
+                            </div>
+                            <div className="grid md:grid-cols-2 gap-4 mb-4">
+                                <input placeholder="Username" value={userForm.username} onChange={e => !isAutoID && setUserForm({...userForm, username: e.target.value})} readOnly={isAutoID} className={`${isAutoID ? 'bg-gray-100' : 'bg-white border-2 border-yellow-200'} p-3 rounded-xl font-mono text-gray-700`}/>
+                                <input placeholder="Password" value={userForm.password} onChange={e => !isAutoID && setUserForm({...userForm, password: e.target.value})} readOnly={isAutoID} className={`${isAutoID ? 'bg-gray-100' : 'bg-white border-2 border-yellow-200'} p-3 rounded-xl font-mono text-gray-700`}/>
+                            </div>
+                            <button onClick={handleSaveUser} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-700">SAVE TO HIVE</button>
+                        </div>
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
+                            <h3 className="font-bold mb-4 text-yellow-900">Existing Colony Members</h3>
+                            {filteredUsers.length > 0 ? (
+                                <table className="w-full text-left">
+                                    <thead className="bg-yellow-50"><tr><th className="p-3 rounded-l-xl">Name</th><th className="p-3">Class</th><th className="p-3">Username</th><th className="p-3 rounded-r-xl">Action</th></tr></thead>
+                                    <tbody>{filteredUsers.map(u => (
+                                        <tr key={u._id} className="border-b border-yellow-50 hover:bg-yellow-50/50">
+                                            <td className="p-3 font-bold text-gray-700">{u.name}</td><td className="p-3"><span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold">{u.class_id}</span></td><td className="p-3 font-mono text-sm text-gray-500">{u.username}</td>
+                                            <td className="p-3 flex gap-2">
+                                                <button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded-lg hover:bg-blue-200" title="Reset Password"><Key size={16}/></button>
+                                                <button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200" title="Delete User"><Trash2 size={16}/></button>
+                                            </td>
+                                        </tr>
+                                    ))}</tbody>
+                                </table>
+                            ) : <FunEmptyState message={`No ${adminTab} found. Start adding them!`} />}
+                        </div>
+                    </div>
+                )}
+                
+                {adminTab === 'classes' && (
+                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 max-w-lg">
+                        <h2 className="font-bold text-lg mb-4 text-yellow-900">Manage Classes</h2>
+                        <div className="flex gap-2 mb-6">
+                            <button onClick={handleAddClass} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow hover:bg-green-700 flex justify-center items-center gap-2"><Plus/> Add New Class</button>
+                        </div>
+                        {classes.length > 0 ? (
+                            <div className="space-y-2">
+                                {classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}
+                            </div>
+                        ) : <FunEmptyState message="No classes added yet!" />}
+                    </div>
+                )}
+
+                {adminTab === 'curriculum' && (
+                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
+                        <h2 className="font-bold text-yellow-900 mb-4 text-xl">Honey Jar (Word Bank)</h2>
+                        <select value={selectedClassForWords} onChange={e => setSelectedClassForWords(e.target.value)} className="w-full p-3 bg-yellow-50 border border-yellow-200 rounded-xl font-bold mb-6 text-yellow-900 outline-none focus:ring-2 ring-yellow-400">
+                            <option value="">-- Select Class --</option>
+                            {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        {selectedClassForWords && (
+                            <div className="animate-in fade-in slide-in-from-top-4">
+                                <div className={`p-4 rounded-2xl mb-6 ${editingWordId ? 'bg-orange-50 border-2 border-orange-200' : ''}`}>
+                                    {editingWordId && <div className="text-orange-600 font-bold mb-2 flex justify-between items-center"><span>EDITING MODE</span> <button onClick={cancelEditing} className="text-sm underline">Cancel</button></div>}
+                                    <div className="flex gap-2 mb-4">
+                                        <input placeholder="Type Word..." value={newWordForm.word} onChange={e => setNewWordForm({...newWordForm, word: e.target.value})} className="flex-1 bg-white border-2 border-yellow-100 p-3 rounded-xl text-lg font-bold outline-none focus:border-yellow-400"/>
+                                        <button onClick={fetchRealDictionaryData} disabled={loadingAI} className="bg-purple-100 text-purple-700 px-6 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-200 disabled:opacity-50">
+                                            {loadingAI ? <RefreshCw className="animate-spin"/> : <Sparkles/>} Auto-Fill
+                                        </button>
+                                    </div>
+                                    <div className="grid md:grid-cols-2 gap-3 mb-4">
+                                        <textarea placeholder="Definition" value={newWordForm.definition} onChange={e => setNewWordForm({...newWordForm, definition: e.target.value})} className="bg-gray-50 p-3 rounded-xl resize-none h-24"/>
+                                        <textarea placeholder="Usage Sentence" value={newWordForm.usage} onChange={e => setNewWordForm({...newWordForm, usage: e.target.value})} className="bg-gray-50 p-3 rounded-xl resize-none h-24"/>
+                                        <input placeholder="Synonyms" value={newWordForm.synonyms} onChange={e => setNewWordForm({...newWordForm, synonyms: e.target.value})} className="bg-gray-50 p-3 rounded-xl"/>
+                                        <input placeholder="Antonyms" value={newWordForm.antonyms} onChange={e => setNewWordForm({...newWordForm, antonyms: e.target.value})} className="bg-gray-50 p-3 rounded-xl"/>
+                                        <input placeholder="Etymology" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-gray-50 p-3 rounded-xl md:col-span-2"/>
+                                    </div>
+                                    <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`w-full text-white font-bold py-4 rounded-xl shadow-lg ${editingWordId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-600 hover:bg-green-700'}`}>
+                                        {editingWordId ? 'UPDATE WORD IN JAR' : 'ADD TO OFFICIAL LIST'}
+                                    </button>
+                                </div>
+                                
+                                <div className="mt-8">
+                                    <h3 className="font-bold text-gray-400 text-sm mb-4 uppercase tracking-widest border-b pb-2">Words in Jar</h3>
+                                    {(wordBank[selectedClassForWords] || []).length > 0 ? (
+                                        <div className="space-y-2">
+                                            {(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (
+                                                <div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100">
+                                                    <div><span className="font-bold text-yellow-900">{w.word}</span><p className="text-xs text-yellow-700 truncate w-64">{w.definition}</p></div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded-lg hover:bg-blue-200" title="Edit Word"><Edit3 size={16}/></button>
+                                                        <button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="text-red-400 bg-white p-2 rounded-lg hover:text-red-600"><Trash2 size={16}/></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : <FunEmptyState message="No words yet. Feed the bees!" />}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                {adminTab === 'exam_control' && (
+                    <div className="bg-white p-8 rounded-3xl shadow-lg border-b-8 border-red-500">
+                        <h2 className="text-2xl font-black mb-6 text-red-600 flex items-center gap-2"><Shield/> Super Admin Test Override</h2>
+                        <p className="mb-6 text-gray-500">You can start or stop a test for ANY class here, overriding the teacher.</p>
+                        
+                        <div className="mb-6">
+                            <label className="font-bold block mb-2">Select Target Class</label>
+                            <select className="w-full p-4 bg-red-50 rounded-xl font-bold text-lg border-2 border-red-100 outline-none focus:border-red-400" 
+                                value={adminSelectedTestClass} onChange={e => setAdminSelectedTestClass(e.target.value)}>
+                                <option value="">-- Select Class --</option>
+                                {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+
+                        {adminSelectedTestClass && (
+                            <div className="animate-in fade-in">
+                                <div className="grid md:grid-cols-2 gap-6 mb-6">
+                                    <div className="bg-gray-50 p-4 rounded-xl">
+                                        <label className="font-bold block mb-2">Test Mode</label>
+                                        <select className="w-full p-3 rounded-lg border outline-none" 
+                                            value={sessionConfig.mode} 
+                                            onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}>
+                                            <option value="test_standard">Standard Spelling</option>
+                                            <option value="test_rush">Rush Hour (Speed)</option>
+                                            <option value="test_unscramble">Unscramble</option>
+                                            <option value="test_quiz">Quiz</option>
+                                        </select>
+                                    </div>
+                                    <div className="bg-gray-50 p-4 rounded-xl">
+                                        <label className="font-bold block mb-2">Timer Settings</label>
+                                        {(sessionConfig.mode === 'test_rush') ? (
+                                             <input type="number" placeholder="Global Timer (sec)" className="w-full p-3 rounded-lg border" value={sessionConfig.globalTimer} 
+                                                onChange={e => setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/>
+                                        ) : (
+                                             <input type="number" placeholder="Per Word Timer (sec)" className="w-full p-3 rounded-lg border" value={sessionConfig.timerPerWord} 
+                                                onChange={e => setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>
+                                        )}
+                                    </div>
+                                </div>
+                                <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} 
+                                    className={`w-full py-6 rounded-2xl font-black text-2xl transition-all shadow-xl ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>
+                                    {testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {adminTab === 'results' && (
+                    <div className="space-y-4">
+                        <h2 className="text-xl font-bold text-yellow-900">Global Progress Monitor</h2>
+                        {results.length > 0 ? (
+                            results.map((r, i) => (
+                                <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
+                                    <div className="flex items-center gap-3">
+                                        <div className="bg-green-100 p-2 rounded-full"><Trophy size={20} className="text-green-600"/></div>
+                                        <div><span className="font-bold text-gray-800">{r.student}</span> <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-500">{r.class_id}</span></div>
+                                    </div>
+                                    <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
+                                    <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
+                                </div>
+                            ))
+                        ) : <FunEmptyState message="No results yet. Start testing!" />}
+                    </div>
+                )}
+            </main>
+        </div>
+      </div>
+    );
+  }
+
+  // --- TEACHER VIEW ---
+  if (activeView === 'teacher_dash') {
+    const cls = currentUser.class_id;
+    const session = testSessions[cls] || {};
+    return (
+        <div className="min-h-screen bg-green-50 p-6 font-sans">
+            <header className="flex justify-between items-center mb-8 max-w-4xl mx-auto">
+                <div className="flex items-center gap-4"><img src={logo} alt="Logo" className="w-12 h-12 rounded-full border-2 border-white" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><h1 className="text-2xl font-black text-green-900">Teacher <span className="text-yellow-500">{cls}</span></h1></div>
+                <button onClick={handleLogout} className="bg-white text-red-500 px-6 py-2 rounded-full font-bold shadow-sm">Logout</button>
+            </header>
+            <div className="flex justify-center gap-4 mb-8">
+                <button onClick={() => setTeacherTab('test_control')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'test_control' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Test Control</button>
+                <button onClick={() => setTeacherTab('results')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'results' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Results</button>
+            </div>
+            <div className="max-w-4xl mx-auto grid gap-6">
+                {teacherTab === 'test_control' && (
+                <div className="bg-white p-8 rounded-[2rem] shadow-xl border-b-8 border-green-600">
+                    <h3 className="text-2xl font-black mb-6 text-green-800 flex items-center gap-2"><Trophy className="text-yellow-500"/> Class Control Center</h3>
+                    <div className="grid md:grid-cols-2 gap-6 mb-6">
+                         <div>
+                            <label className="font-bold block mb-2">Test Mode</label>
+                            <select className="w-full p-3 bg-gray-50 rounded-xl font-bold text-gray-700" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}>
+                                <option value="test_standard">Standard Spelling</option>
+                                <option value="test_rush">Rush Hour (Speed)</option>
+                                <option value="test_unscramble">Unscramble</option>
+                                <option value="test_quiz">Quiz</option>
+                            </select>
+                         </div>
+                         <div>
+                            <label className="font-bold block mb-2">Timer</label>
+                            {sessionConfig.mode === 'test_rush' ? 
+                                <input type="number" placeholder="Global (sec)" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.globalTimer} onChange={e=>setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/> :
+                                <input type="number" placeholder="Per Word (sec)" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.timerPerWord} onChange={e=>setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>
+                            }
+                         </div>
+                    </div>
+                    <button onClick={() => updateSession(cls, !session.active)} className={`w-full py-4 rounded-xl font-black text-lg transition-all ${session.active ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white hover:bg-green-600'}`}>
+                        {session.active ? 'STOP TEST' : 'START TEST'}
+                    </button>
+                </div>
+                )}
+                {teacherTab === 'results' && (
+                    <div className="space-y-4">
+                         {results.filter(r => r.class === cls).map((r, i) => (
+                            <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
+                                <div><span className="font-bold text-gray-800">{r.student}</span></div>
+                                <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
+                                <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+  }
+
+  // --- STUDENT VIEW ---
+  if (activeView === 'student_dash') {
+    const isTestActive = activeSession.active; // Use activeSession from polling
+    return (
+      <div className="min-h-screen bg-yellow-50 p-6 flex flex-col items-center font-sans">
+        <header className="w-full max-w-2xl flex justify-between items-center mb-8">
+            <div className="flex items-center gap-4"><img src={logo} alt="Logo" className="w-14 h-14 rounded-full border-4 border-white shadow-md" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><div className="leading-tight"><h1 className="text-2xl font-black text-green-900">Hi, {currentUser.name.split(' ')[0]}!</h1><p className="text-yellow-600 font-bold tracking-widest text-xs uppercase">Student • {currentUser.class_id}</p></div></div>
+            <button onClick={handleLogout} className="bg-white text-red-500 px-4 py-2 rounded-xl font-bold shadow-sm hover:bg-red-50">Log Out</button>
+        </header>
+        <div className="grid gap-6 w-full max-w-md">
+            <div className="bg-white p-6 rounded-[2rem] shadow-lg border-b-8 border-green-500 relative overflow-hidden group">
+                <div className="absolute -right-4 -top-4 text-green-100 opacity-50 group-hover:scale-110 transition-transform"><BookOpen size={100}/></div>
+                <h2 className="text-2xl font-black text-green-800 relative z-10">Practice Mode</h2>
+                <div className="mt-4 flex items-center gap-2 relative z-10">
+                    <Clock size={16} className="text-green-600"/><select className="bg-green-50 rounded-lg p-1 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}><option value={0}>No Timer</option><option value={10}>10s</option><option value={30}>30s</option></select>
+                </div>
+                <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700 relative z-10">Start Studying</button>
+            </div>
+            
+            <div className="bg-gradient-to-br from-purple-500 to-indigo-600 p-6 rounded-[2rem] shadow-lg border-b-8 border-indigo-800 text-white">
+                <h2 className="text-2xl font-black mb-4 flex items-center gap-2"><Gamepad2/> Fun Games</h2>
+                <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => startSession('unscramble')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🧩 Unscramble</button>
+                    <button onClick={() => startSession('quiz')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">❓ Quiz</button>
+                    <button onClick={() => startSession('blanks')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🔡 Blanks</button>
+                    <button onClick={() => startSession('origin')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🌍 Origin</button>
+                </div>
+            </div>
+
+            <button onClick={() => isTestActive && startSession('test_live')} className={`p-6 rounded-[2rem] shadow-lg border-b-8 text-left transition-transform ${isTestActive ? 'bg-yellow-400 border-yellow-600 hover:scale-[1.02] cursor-pointer' : 'bg-gray-200 border-gray-300 grayscale cursor-not-allowed'}`}>
+                 <div className="flex items-center gap-4">
+                    <div className="bg-white/30 p-3 rounded-full"><Trophy className="text-white" size={32}/></div>
+                    <div><h2 className="text-2xl font-black text-white mix-blend-hard-light">{isTestActive ? 'TAKE TEST' : 'TEST LOCKED'}</h2><p className="text-white/60 text-sm font-bold">{isTestActive ? "Good luck!" : "Wait for teacher"}</p></div>
+                 </div>
+            </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- GAME INTERFACE ---
+  if (activeView === 'game_interface') {
+    const currentWord = game.words[game.index];
+    const scrambled = currentWord?.word.split('').sort(() => Math.random() - 0.5).join(' ');
+    const maskedWord = currentWord?.word.replace(/[aeiou]/gi, '_');
+    
+    return (
+        <div className="min-h-screen bg-green-600 flex flex-col items-center justify-center p-6 relative font-sans">
+            <div className="absolute inset-0 opacity-10 pointer-events-none" style={{backgroundImage: 'radial-gradient(circle, #ffffff 2px, transparent 2px)', backgroundSize: '24px 24px'}}></div>
+            <button onClick={() => setActiveView('student_dash')} className="absolute top-6 right-6 text-white hover:scale-110 transition-transform"><X size={32}/></button>
+            <div className="bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-2xl relative z-10 text-center border-4 border-yellow-400">
+                <div className="flex justify-between items-center mb-6 text-gray-400 text-xs font-bold tracking-widest">
+                    <span className="uppercase text-green-800 bg-green-100 px-2 py-1 rounded">{game.mode} • {game.gameType}</span>
+                    <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full font-mono">{game.timeLeft > 0 ? `${game.timeLeft}s` : '∞'}</span>
+                </div>
+
+                {game.gameType === 'spelling' && (
+                    <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group">
+                        <Volume2 size={48} className="text-yellow-900 group-hover:rotate-12 transition-transform"/>
+                    </button>
+                )}
+                {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm">{scrambled}</div>}
+                {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm">{maskedWord}</div>}
+                {(game.gameType === 'quiz' || game.gameType === 'origin') && <div className="text-3xl font-black text-gray-800 mb-8">"{currentWord.word}"</div>}
+
+                {(game.gameType === 'quiz' || game.gameType === 'origin') ? (
+                    <div className="grid gap-3">
+                        {quizOptions.map((opt, i) => (
+                            <button key={i} onClick={() => { setGame({...game, input: opt}); setTimeout(() => submitWord(), 100); }} 
+                                className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all">{opt}</button>
+                        ))}
+                    </div>
+                ) : (
+                    <>
+                        <input autoFocus type="text" value={game.input} onChange={e => setGame({...game, input: e.target.value})} onKeyDown={e => e.key === 'Enter' && submitWord()}
+                            className="w-full text-center text-5xl font-black text-green-900 border-b-4 border-green-200 focus:border-yellow-400 outline-none pb-4 mb-8 uppercase placeholder-gray-200 tracking-wider" placeholder="TYPE HERE"/>
+                        <button onClick={() => submitWord()} className="w-full bg-green-600 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-700 transform hover:-translate-y-1 transition-all">SUBMIT ANSWER</button>
+                    </>
+                )}
+                {game.mode === 'practice' && (
+                    <div className="mt-6 pt-6 border-t border-gray-100 grid grid-cols-3 gap-2">
+                        <div className="bg-blue-50 p-2 rounded-lg text-xs text-blue-800 font-bold"><p className="text-[10px] uppercase text-blue-400 mb-1">Def</p>{currentWord.definition?.slice(0,40)}...</div>
+                        <div className="bg-green-50 p-2 rounded-lg text-xs text-green-800 font-bold"><p className="text-[10px] uppercase text-green-400 mb-1">Use</p>"{currentWord.usage?.slice(0,40)}..."</div>
+                        <div className="bg-purple-50 p-2 rounded-lg text-xs text-purple-800 font-bold"><p className="text-[10px] uppercase text-purple-400 mb-1">Origin</p>{currentWord.etymology?.slice(0,20)}...</div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+  }
+  return null;
+};
+export default App;
