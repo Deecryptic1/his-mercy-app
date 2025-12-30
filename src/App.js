@@ -4,11 +4,12 @@ import {
   User, LogOut, Trash2, 
   Volume2, X, Eye, EyeOff, Edit3, 
   BookOpen, Trophy, Clock, Gamepad2, 
-  Sparkles, Plus, RefreshCw, Key, Menu 
+  Sparkles, Plus, RefreshCw, Key, Menu,
+  SkipForward, StopCircle, Mic
 } from 'lucide-react';
 import logo from './logo.jpg'; 
 
-// --- ANIMATION STYLES (INJECTED) ---
+// --- ANIMATION STYLES ---
 const styleTag = document.createElement("style");
 styleTag.innerHTML = `
   @keyframes float { 0%, 100% { transform: translateY(0px) rotate(0deg); } 50% { transform: translateY(-20px) rotate(5deg); } }
@@ -49,17 +50,18 @@ const App = () => {
 
   const speak = (text) => {
     window.speechSynthesis.cancel();
+    if(!text) return;
     const u = new SpeechSynthesisUtterance(text);
     if (selectedVoice) u.voice = selectedVoice;
     u.pitch = 1.2; u.rate = 0.9; 
     window.speechSynthesis.speak(u);
   };
 
-  // --- AUTOMATIC SERVER DETECTION ---
+  // --- API URL ---
   const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:5000/api'  
     : 'https://school-app-backend-d4fi.onrender.com/api'; 
-   
+    
   // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
   const [activeView, setActiveView] = useState('login'); 
@@ -81,10 +83,14 @@ const App = () => {
   const [isAutoID, setIsAutoID] = useState(true); 
   const [newWordForm, setNewWordForm] = useState({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
   const [editingWordId, setEditingWordId] = useState(null); 
-   
+    
   const [selectedClassForWords, setSelectedClassForWords] = useState('');
   const [adminSelectedTestClass, setAdminSelectedTestClass] = useState(''); 
+  
+  // Practice Config
   const [practiceTimer, setPracticeTimer] = useState(0);
+  const [practiceWordCount, setPracticeWordCount] = useState('10'); // New Word Count
+
   const [loadingAI, setLoadingAI] = useState(false); 
 
   // UI Animation States
@@ -96,7 +102,8 @@ const App = () => {
 
   const [game, setGame] = useState({ 
     active: false, words: [], index: 0, score: 0, input: '', 
-    mode: 'practice', gameType: 'spelling', timeLeft: 0 
+    mode: 'practice', gameType: 'spelling', timeLeft: 0,
+    startTime: 0 // Track total time
   });
 
   // --- DATA SYNCING ---
@@ -256,7 +263,6 @@ const App = () => {
   const handleAddClass = async () => {
       const name = prompt("Enter new Class Name (e.g., Year 7):");
       if(!name) return;
-      
       try {
         const res = await fetch(`${API_URL}/classes`, {
             method: 'POST', 
@@ -298,16 +304,13 @@ const App = () => {
   const handleSaveWord = async (targetClass, source) => {
     if (!targetClass || !newWordForm.word) return alert("Select Class & Word");
     const entry = { ...newWordForm, class_id: targetClass, source };
-    
     try {
         let res;
         const url = editingWordId ? `${API_URL}/words/${editingWordId}` : `${API_URL}/words`;
         const method = editingWordId ? 'PUT' : 'POST';
-
         res = await fetch(url, {
             method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry)
         });
-
         if (res.ok) {
             const savedWord = await res.json();
             setWordBank(prev => {
@@ -345,11 +348,11 @@ const App = () => {
   // --- GAME LOGIC ---
   const startSession = (origin) => {
     const myClass = currentUser.class_id;
-    const words = wordBank[myClass] || [];
+    let words = wordBank[myClass] || [];
     if (words.length === 0) return alert("No words found.");
 
     let mode, gameType, timer;
-    let sessionWords = words;
+    let sessionWords = [...words];
 
     if (origin === 'test_live') {
         if (!activeSession.active) return alert("Test Locked");
@@ -359,84 +362,111 @@ const App = () => {
         sessionWords = words.filter(w => w.source === 'admin'); 
     } else if (origin === 'practice') {
         mode = 'practice'; gameType = 'spelling'; timer = practiceTimer;
+        // Logic for word count selection
+        sessionWords = sessionWords.sort(() => 0.5 - Math.random()); // Randomize first
+        const limit = practiceWordCount === 'all' ? sessionWords.length : parseInt(practiceWordCount);
+        sessionWords = sessionWords.slice(0, limit);
+        if (sessionWords.length === 0) return alert("Not enough words available.");
     } else {
         mode = 'fun'; gameType = origin; timer = 0;
+        sessionWords = sessionWords.sort(() => 0.5 - Math.random()).slice(0, 10);
     }
 
-    if (sessionWords.length === 0) return alert("No words available.");
-
     setGame({
-      active: true, words: sessionWords.sort(() => Math.random() - 0.5),
-      index: 0, score: 0, input: '', mode, gameType, timeLeft: timer
+      active: true, words: sessionWords,
+      index: 0, score: 0, input: '', mode, gameType, 
+      timeLeft: timer,
+      startTime: Date.now()
     });
     setActiveView('game_interface');
   };
 
-  const submitWord = (forcedFail = false) => {
+  const submitWord = (action = 'submit') => {
+    // action: 'submit' | 'skip' | 'timeout'
     const currentWord = game.words[game.index];
     let isCorrect = false;
-    if (!forcedFail) {
+
+    if (action === 'submit') {
         const cleanInput = game.input.trim().toLowerCase();
         const cleanWord = currentWord.word.toLowerCase();
-        if (game.gameType === 'quiz') isCorrect = game.input === currentWord.definition;
+        
+        if (game.gameType === 'quiz') {
+            // FIX: Robust check for quiz
+            isCorrect = game.input === currentWord.definition; 
+        }
         else if (game.gameType === 'origin') isCorrect = game.input === currentWord.etymology;
         else isCorrect = cleanInput === cleanWord;
+    } else {
+        // Skip or Timeout counts as wrong
+        isCorrect = false; 
     }
     
-    // Feedback Animation
     setFeedbackState(isCorrect ? 'correct' : 'wrong');
     setTimeout(() => setFeedbackState(null), 500);
 
-    if (game.mode === 'practice' || game.mode === 'fun') speak(isCorrect ? "Correct!" : "Try again.");
+    if (game.mode === 'practice' || game.mode === 'fun') speak(isCorrect ? "Correct!" : "Incorrect");
 
     const nextScore = isCorrect ? game.score + 1 : game.score;
     const nextIdx = game.index + 1;
 
-    if (game.mode.includes('rush')) {
-        if (nextIdx >= game.words.length) finishGame(nextScore);
-        else {
-             setGame(prev => ({ ...prev, index: nextIdx, score: nextScore, input: '' }));
-             if(game.gameType === 'spelling') setTimeout(() => speak(game.words[nextIdx].word), 500);
-        }
+    // Check if game over
+    if (nextIdx >= game.words.length) {
+        finishGame(nextScore);
     } else {
-        if (nextIdx >= game.words.length) finishGame(nextScore);
-        else {
-            let nextTime = 0;
-            if (game.mode.includes('test')) nextTime = activeSession.timerPerWord;
-            else nextTime = practiceTimer;
-            setGame(prev => ({ ...prev, index: nextIdx, score: nextScore, input: '', timeLeft: nextTime }));
-            if(game.gameType === 'spelling') setTimeout(() => speak(game.words[nextIdx].word), 800);
+        // Reset Logic
+        let nextTime = 0;
+        if (game.mode.includes('test')) {
+            nextTime = game.mode === 'test_rush' ? game.timeLeft : activeSession.timerPerWord;
+        } else {
+            nextTime = practiceTimer;
+        }
+
+        setGame(prev => ({ 
+            ...prev, 
+            index: nextIdx, 
+            score: nextScore, 
+            input: '', 
+            timeLeft: nextTime 
+        }));
+        
+        if(game.gameType === 'spelling') {
+            setTimeout(() => speak(game.words[nextIdx].word), 800);
         }
     }
   };
 
   const finishGame = async (finalScore) => {
+    const totalTime = (Date.now() - game.startTime) / 1000; // Seconds
     setGame(prev => ({...prev, active: false}));
+
     if (game.mode.includes('test')) {
         await fetch(`${API_URL}/results`, {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 student: currentUser.name, class_id: currentUser.class_id, score: finalScore, 
-                total: game.words.length, mode: game.mode, date: new Date().toLocaleString()
+                total: game.words.length, mode: game.mode, date: new Date().toLocaleString(),
+                timeTaken: totalTime
             })
         });
         setResults(prev => [...prev, {
             student: currentUser.name, class: currentUser.class_id, score: finalScore, 
-            total: game.words.length, mode: game.mode, date: new Date().toLocaleString()
+            total: game.words.length, mode: game.mode, date: new Date().toLocaleString(),
+            timeTaken: totalTime
         }]);
     }
     alert(`Complete! Score: ${finalScore}/${game.words.length}`);
     setActiveView('student_dash');
   };
 
+  // Timer Effect
   useEffect(() => {
     let interval;
     if (game.active && game.timeLeft > 0) {
       interval = setInterval(() => {
         setGame(prev => {
           if (prev.timeLeft <= 1) {
-             if (prev.mode.includes('rush')) { finishGame(prev.score); return { ...prev, active: false }; } 
-             else { submitWord(true); return { ...prev, timeLeft: 0 }; }
+             if (prev.mode === 'test_rush') { finishGame(prev.score); return { ...prev, active: false }; } 
+             else { submitWord('timeout'); return { ...prev, timeLeft: 0 }; } // Trigger timeout logic
           }
           return { ...prev, timeLeft: prev.timeLeft - 1 };
         });
@@ -446,12 +476,55 @@ const App = () => {
   }, [game.active, game.timeLeft]);
 
   const currentWord = game.words[game.index];
+  
+  // FIX: Quiz Options Memoization Logic
   const quizOptions = useMemo(() => {
     if (!currentWord || (game.gameType !== 'quiz' && game.gameType !== 'origin')) return [];
     const field = game.gameType === 'quiz' ? 'definition' : 'etymology';
-    const otherWords = game.words.filter(w => w._id !== currentWord._id).slice(0, 3);
-    return [currentWord[field], ...otherWords.map(w => w[field] || "N/A")].sort(() => Math.random() - 0.5);
-  }, [currentWord, game.gameType, game.words]);
+    // Get 3 random other words
+    const otherWords = game.words
+        .filter(w => w._id !== currentWord._id)
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 3);
+    
+    // Combine and shuffle
+    return [currentWord[field], ...otherWords.map(w => w[field] || "N/A")]
+        .sort(() => Math.random() - 0.5);
+  }, [currentWord, game.gameType, game.words.length]); // Depends on currentWord
+
+  // LEADERBOARD COMPONENT
+  const Leaderboard = ({ type, data }) => {
+      // Logic: Sort by Score (Desc), then Time (Asc)
+      const sorted = [...data].sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          return (a.timeTaken || 9999) - (b.timeTaken || 9999);
+      });
+
+      return (
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 mb-6">
+              <h3 className="font-bold text-lg mb-4 text-green-800 flex items-center gap-2">
+                  <Trophy size={20} className="text-yellow-500"/> {type} Leaderboard
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                    <thead className="bg-yellow-50 text-yellow-900">
+                        <tr><th className="p-2">Rank</th><th className="p-2">Name</th><th className="p-2">Score</th><th className="p-2">Time</th></tr>
+                    </thead>
+                    <tbody>
+                        {sorted.map((r, i) => (
+                            <tr key={i} className={`border-b ${i===0?'bg-yellow-50 font-bold':''}`}>
+                                <td className="p-2">#{i+1}</td>
+                                <td className="p-2">{r.student} {type==='School' && <span className="text-xs text-gray-400">({r.class_id})</span>}</td>
+                                <td className="p-2 text-green-600">{r.score}/{r.total}</td>
+                                <td className="p-2 text-gray-500">{r.timeTaken ? `${Math.round(r.timeTaken)}s` : 'N/A'}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+              </div>
+          </div>
+      );
+  };
 
   const FunEmptyState = ({ message }) => (
       <div className="text-center p-8 border-2 border-dashed border-yellow-300 rounded-3xl bg-yellow-50 animate-float">
@@ -466,7 +539,6 @@ const App = () => {
         <div className="absolute top-10 left-10 text-4xl opacity-20 animate-float delay-100">🐝</div>
         <div className="absolute bottom-20 right-20 text-5xl opacity-20 animate-float delay-200">🐝</div>
         <div className="absolute top-1/2 left-1/4 text-3xl opacity-10 animate-float delay-300">🌸</div>
-        <div className="absolute top-1/3 right-10 text-4xl opacity-15 animate-float">🌺</div>
     </div>
   );
 
@@ -476,21 +548,11 @@ const App = () => {
         <BackgroundBees />
         <div className="bg-white/90 backdrop-blur-md p-8 md:p-12 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-full max-w-md border-4 border-white relative z-10 animate-slide-in">
             <div className="flex flex-col items-center mb-8">
-                {/* --- FIXED LOGO CENTERING & NAME --- */}
                 <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mb-4 shadow-xl border-4 border-white overflow-hidden transform hover:scale-110 transition-transform relative mx-auto animate-pop">
-                   <img 
-                     src={logo} 
-                     alt="School Logo" 
-                     className="w-full h-full object-cover relative z-10" 
-                     onError={(e) => {
-                        e.target.style.display = 'none'; 
-                        e.target.nextSibling.style.display = 'flex'; 
-                     }} 
-                   />
+                   <img src={logo} alt="Logo" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
                    <div className="hidden absolute inset-0 items-center justify-center text-6xl animate-bounce z-0">👑🐝</div>
                 </div>
                 <h2 className="text-green-700 font-bold tracking-widest uppercase mb-2 text-center text-sm">His Mercy Private School</h2>
-                {/* BIGGER BEE EMOJI */}
                 <h1 className="text-4xl font-black text-yellow-500 text-center uppercase tracking-tighter drop-shadow-sm">
                   Un<span className="text-6xl inline-block align-middle hover:scale-125 transition-transform animate-float">🐝</span>lievable<br/>
                   <span className="text-2xl text-green-800">Spellings</span>
@@ -532,10 +594,7 @@ const App = () => {
             <div className="flex items-center gap-2">
                 <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="md:hidden text-yellow-900 p-2 rounded hover:bg-yellow-100"><Menu size={24}/></button>
                 <img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/>
-                {/* BIGGER BEE EMOJI IN MENU */}
-                <h1 className="text-xl font-black text-yellow-900 flex items-center">
-                  Un<span className="text-3xl mx-1 hover:rotate-12 transition-transform">🐝</span>lievable Spellings
-                </h1>
+                <h1 className="text-xl font-black text-yellow-900 flex items-center">Un<span className="text-3xl mx-1 hover:rotate-12 transition-transform">🐝</span>lievable</h1>
             </div>
             <button onClick={handleLogout} className="text-red-500 font-bold flex gap-2 hover:bg-red-50 px-4 py-2 rounded-xl transition"><LogOut size={18}/> Exit</button>
         </header>
@@ -543,10 +602,7 @@ const App = () => {
             {showMobileMenu && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowMobileMenu(false)}></div>}
             
             <nav className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-yellow-200 p-4 flex flex-col gap-2 shadow-2xl transform transition-transform duration-300 ease-in-out ${showMobileMenu ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 md:shadow-none md:z-0`}>
-                <div className="flex justify-between items-center mb-4 md:hidden">
-                    <span className="font-bold text-yellow-900 text-lg">Menu</span>
-                    <button onClick={() => setShowMobileMenu(false)} className="text-gray-500 p-2"><X size={24}/></button>
-                </div>
+                <div className="flex justify-between items-center mb-4 md:hidden"><span className="font-bold text-yellow-900 text-lg">Menu</span><button onClick={() => setShowMobileMenu(false)} className="text-gray-500 p-2"><X size={24}/></button></div>
                 {['students', 'teachers', 'classes', 'curriculum', 'exam_control', 'results'].map(tab => (
                     <button key={tab} onClick={() => { setAdminTab(tab); setShowMobileMenu(false); }} className={`w-full text-left p-3 rounded-xl font-bold capitalize transition-all ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md translate-x-2' : 'text-gray-500 hover:bg-yellow-50 hover:translate-x-1'}`}>
                         {tab.replace('_', ' ')}
@@ -557,38 +613,38 @@ const App = () => {
             <main className="flex-1 p-8 overflow-y-auto w-full animate-slide-in">
                 {['students', 'teachers'].includes(adminTab) && (
                     <div className="space-y-6">
+                        {/* ... (Existing User Mgmt UI remains same) ... */}
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
-                            <h2 className="font-bold text-lg text-yellow-900 mb-4">Add New {adminTab.slice(0, -1)}</h2>
-                            <div className="grid md:grid-cols-3 gap-4 mb-4">
-                                <input placeholder="Full Name" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400 transition-all"/>
-                                <select value={userForm.class_id} onChange={e => setUserForm({...userForm, class_id: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400">
-                                    <option value="">-- Class --</option>
-                                    {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                                <div className="flex items-center gap-2">
-                                    <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>{isAutoID ? 'Auto' : 'Manual'}</button>
-                                    {isAutoID && <button onClick={() => { if (!userForm.name) return alert("Name needed!"); const rnd = Math.floor(Math.random()*900)+100; const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,''); setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`})); }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200 hover:scale-110 transition-transform"><RefreshCw size={18}/></button>}
-                                </div>
-                            </div>
-                            <div className="grid md:grid-cols-2 gap-4 mb-4">
-                                <input placeholder="Username" value={userForm.username} onChange={e => !isAutoID && setUserForm({...userForm, username: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
-                                <input placeholder="Password" value={userForm.password} onChange={e => !isAutoID && setUserForm({...userForm, password: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
-                            </div>
-                            <button onClick={handleSaveUser} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-600 transform active:scale-95 transition-all">SAVE USER</button>
+                           <h2 className="font-bold text-lg text-yellow-900 mb-4">Add New {adminTab.slice(0, -1)}</h2>
+                           <div className="grid md:grid-cols-3 gap-4 mb-4">
+                               <input placeholder="Full Name" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400 transition-all"/>
+                               <select value={userForm.class_id} onChange={e => setUserForm({...userForm, class_id: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400">
+                                   <option value="">-- Class --</option>
+                                   {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                               </select>
+                               <div className="flex items-center gap-2">
+                                   <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>{isAutoID ? 'Auto' : 'Manual'}</button>
+                                   {isAutoID && <button onClick={() => { if (!userForm.name) return alert("Name needed!"); const rnd = Math.floor(Math.random()*900)+100; const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,''); setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`})); }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200 hover:scale-110 transition-transform"><RefreshCw size={18}/></button>}
+                               </div>
+                           </div>
+                           <div className="grid md:grid-cols-2 gap-4 mb-4">
+                               <input placeholder="Username" value={userForm.username} onChange={e => !isAutoID && setUserForm({...userForm, username: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
+                               <input placeholder="Password" value={userForm.password} onChange={e => !isAutoID && setUserForm({...userForm, password: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
+                           </div>
+                           <button onClick={handleSaveUser} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-600 transform active:scale-95 transition-all">SAVE USER</button>
                         </div>
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 overflow-x-auto">
-                            {filteredUsers.length > 0 ? (
-                                <table className="w-full text-left min-w-[600px]">
-                                    <thead className="bg-yellow-50"><tr><th className="p-3">Name</th><th className="p-3">Class</th><th className="p-3">User</th><th className="p-3">Act</th></tr></thead>
-                                    <tbody>{filteredUsers.map(u => (
-                                        <tr key={u._id} className="border-b hover:bg-yellow-50 transition-colors"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></td></tr>
-                                    ))}</tbody>
-                                </table>
-                            ) : <FunEmptyState message="No users found." />}
+                           {filteredUsers.length > 0 ? (
+                               <table className="w-full text-left min-w-[600px]">
+                                   <thead className="bg-yellow-50"><tr><th className="p-3">Name</th><th className="p-3">Class</th><th className="p-3">User</th><th className="p-3">Act</th></tr></thead>
+                                   <tbody>{filteredUsers.map(u => (
+                                       <tr key={u._id} className="border-b hover:bg-yellow-50 transition-colors"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></td></tr>
+                                   ))}</tbody>
+                               </table>
+                           ) : <FunEmptyState message="No users found." />}
                         </div>
                     </div>
                 )}
-                {/* ... (Other Admin Tabs similar pattern) ... */}
                 {adminTab === 'classes' && (
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 max-w-lg">
                         <div className="flex gap-2 mb-6"><button onClick={handleAddClass} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow hover:bg-green-600 flex justify-center items-center gap-2 transform active:scale-95 transition-all"><Plus/> Add New Class</button></div>
@@ -605,6 +661,7 @@ const App = () => {
                         </select>
                         {selectedClassForWords && (
                             <div className="animate-slide-in">
+                                {/* Word Form logic remains same */}
                                 <div className={`p-4 rounded-2xl mb-6 ${editingWordId ? 'bg-orange-50 border-2 border-orange-200' : ''}`}>
                                     <div className="flex gap-2 mb-4">
                                         <input placeholder="Type Word..." value={newWordForm.word} onChange={e => setNewWordForm({...newWordForm, word: e.target.value})} className="flex-1 bg-white border-2 border-yellow-100 p-3 rounded-xl text-lg font-bold outline-none focus:border-yellow-400"/>
@@ -655,13 +712,12 @@ const App = () => {
                 )}
                 {adminTab === 'results' && (
                     <div className="space-y-4">
-                        {results.length > 0 ? results.map((r, i) => (
-                            <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center hover:scale-105 transition-transform">
-                                <div className="flex items-center gap-3"><div className="bg-green-100 p-2 rounded-full"><Trophy size={20} className="text-green-600"/></div><div><span className="font-bold text-gray-800">{r.student}</span> <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-500">{r.class_id}</span></div></div>
-                                <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
-                                <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
-                            </div>
-                        )) : <FunEmptyState message="No results yet." />}
+                        <Leaderboard type="School" data={results} />
+                        {classes.map(cls => {
+                            const clsResults = results.filter(r => r.class_id === cls);
+                            if(clsResults.length === 0) return null;
+                            return <Leaderboard key={cls} type={cls} data={clsResults} />
+                        })}
                     </div>
                 )}
             </main>
@@ -699,13 +755,8 @@ const App = () => {
               )}
               {teacherTab === 'results' && (
                   <div className="space-y-4">
-                        {results.filter(r => r.class === currentUser.class_id).map((r, i) => (
-                          <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center hover:scale-105 transition-transform">
-                              <div><span className="font-bold text-gray-800">{r.student}</span></div>
-                              <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
-                              <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
-                          </div>
-                      ))}
+                      {/* Teacher only sees their class leaderboard */}
+                      <Leaderboard type={currentUser.class_id} data={results.filter(r => r.class_id === currentUser.class_id)} />
                   </div>
               )}
           </div>
@@ -724,11 +775,33 @@ const App = () => {
             <div className="bg-white p-6 rounded-[2rem] shadow-lg border-b-8 border-green-500 relative overflow-hidden group hover:scale-[1.02] transition-transform duration-300">
                 <div className="absolute -right-4 -top-4 text-green-100 opacity-50 group-hover:scale-110 transition-transform"><BookOpen size={100}/></div>
                 <h2 className="text-2xl font-black text-green-800 relative z-10">Practice Mode</h2>
-                <div className="mt-4 flex items-center gap-2 relative z-10">
-                    <Clock size={16} className="text-green-600"/><select className="bg-green-50 rounded-lg p-1 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}><option value={0}>No Timer</option><option value={10}>10s</option><option value={30}>30s</option></select>
+                <div className="mt-4 flex flex-col gap-2 relative z-10">
+                    {/* UPDATED: Timer Options */}
+                    <div className="flex items-center justify-between">
+                         <div className="flex items-center gap-2"><Clock size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Timer</span></div>
+                         <select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}>
+                            <option value={0}>None</option>
+                            <option value={3}>3s</option>
+                            <option value={5}>5s</option>
+                            <option value={10}>10s</option>
+                            <option value={30}>30s</option>
+                        </select>
+                    </div>
+                    {/* UPDATED: Word Count Selection */}
+                    <div className="flex items-center justify-between">
+                         <div className="flex items-center gap-2"><Sparkles size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Words</span></div>
+                         <select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceWordCount} onChange={e => setPracticeWordCount(e.target.value)}>
+                            <option value="5">5 Words</option>
+                            <option value="10">10 Words</option>
+                            <option value="20">20 Words</option>
+                            <option value="all">All Words</option>
+                        </select>
+                    </div>
                 </div>
                 <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-600 transform active:scale-95 transition-all relative z-10">Start Studying</button>
             </div>
+            
+            {/* Other buttons (Games / Live Test) */}
             <div className="bg-gradient-to-br from-purple-500 to-indigo-600 p-6 rounded-[2rem] shadow-lg border-b-8 border-indigo-800 text-white hover:scale-[1.02] transition-transform duration-300">
                 <h2 className="text-2xl font-black mb-4 flex items-center gap-2"><Gamepad2/> Fun Games</h2>
                 <div className="grid grid-cols-2 gap-3">
@@ -752,11 +825,10 @@ const App = () => {
     const currentWord = game.words[game.index];
     const scrambled = currentWord?.word.split('').sort(() => Math.random() - 0.5).join(' ');
     const maskedWord = currentWord?.word.replace(/[aeiou]/gi, '_');
-     
+      
     return (
         <div className={`min-h-screen flex flex-col items-center justify-center p-6 relative font-sans transition-colors duration-500 ${feedbackState === 'correct' ? 'bg-green-500' : feedbackState === 'wrong' ? 'bg-red-500' : 'bg-green-600'}`}>
             <div className="absolute inset-0 opacity-10 pointer-events-none" style={{backgroundImage: 'radial-gradient(circle, #ffffff 2px, transparent 2px)', backgroundSize: '24px 24px'}}></div>
-            {/* Feedback Overlay Animation */}
             {feedbackState === 'correct' && <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"><div className="text-9xl animate-pop">🎉</div></div>}
             {feedbackState === 'wrong' && <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"><div className="text-9xl animate-shake">❌</div></div>}
 
@@ -765,34 +837,58 @@ const App = () => {
                 <div className="flex justify-between items-center mb-6 text-gray-400 text-xs font-bold tracking-widest">
                     <span className="uppercase text-green-800 bg-green-100 px-2 py-1 rounded">{game.mode} • {game.gameType}</span>
                     <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full font-mono">{game.timeLeft > 0 ? `${game.timeLeft}s` : '∞'}</span>
+                    <span className="text-green-600">{game.index + 1}/{game.words.length}</span>
                 </div>
+                
+                {/* LARGE WORD DISPLAY (For Quiz, Origin, Unscramble, Blanks) */}
                 {game.gameType === 'spelling' && (
                     <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group active:scale-95">
                         <Volume2 size={48} className="text-yellow-900 group-hover:rotate-12 transition-transform"/>
                     </button>
                 )}
-                {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop">{scrambled}</div>}
-                {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop">{maskedWord}</div>}
-                {(game.gameType === 'quiz' || game.gameType === 'origin') && <div className="text-3xl font-black text-gray-800 mb-8 animate-slide-in">"{currentWord.word}"</div>}
+                {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop break-words">{scrambled}</div>}
+                {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop break-words">{maskedWord}</div>}
+                
+                {/* For Quiz/Origin, show the word in quotes */}
+                {(game.gameType === 'quiz' || game.gameType === 'origin') && (
+                    <div className="text-3xl font-black text-gray-800 mb-8 animate-slide-in break-words">"{currentWord.word}"</div>
+                )}
+                
+                {/* INPUT AREA */}
                 {(game.gameType === 'quiz' || game.gameType === 'origin') ? (
                     <div className="grid gap-3">
                         {quizOptions.map((opt, i) => (
                             <button key={i} onClick={() => { setGame({...game, input: opt}); setTimeout(() => submitWord(), 100); }} 
-                                className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95">{opt}</button>
+                                className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95 break-words whitespace-normal h-auto">{opt}</button>
                         ))}
                     </div>
                 ) : (
                     <>
                         <input autoFocus type="text" value={game.input} onChange={e => setGame({...game, input: e.target.value})} onKeyDown={e => e.key === 'Enter' && submitWord()}
-                            className="w-full text-center text-5xl font-black text-green-900 border-b-4 border-green-200 focus:border-yellow-400 outline-none pb-4 mb-8 uppercase placeholder-gray-200 tracking-wider" placeholder="TYPE HERE"/>
-                        <button onClick={() => submitWord()} className="w-full bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 transform hover:-translate-y-1 active:translate-y-0 transition-all">SUBMIT ANSWER</button>
+                            className="w-full text-center text-4xl md:text-5xl font-black text-green-900 border-b-4 border-green-200 focus:border-yellow-400 outline-none pb-4 mb-4 uppercase placeholder-gray-200 tracking-wider" placeholder="TYPE HERE"/>
+                        
+                        {/* Control Buttons (Submit, Skip, Stop) */}
+                        <div className="grid grid-cols-2 gap-2 mb-4">
+                             <button onClick={() => submitWord('submit')} className="col-span-2 bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 transform hover:-translate-y-1 active:translate-y-0 transition-all">SUBMIT</button>
+                             <button onClick={() => submitWord('skip')} className="bg-gray-100 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-200 flex items-center justify-center gap-2"><SkipForward size={18}/> Skip</button>
+                             <button onClick={() => finishGame(game.score)} className="bg-red-100 text-red-600 font-bold py-3 rounded-xl hover:bg-red-200 flex items-center justify-center gap-2"><StopCircle size={18}/> Stop</button>
+                        </div>
                     </>
                 )}
-                {game.mode === 'practice' && (
+
+                {/* HINTS (SPEAK BUTTONS) - Available in Practice AND Rush Mode */}
+                {(game.mode === 'practice' || game.mode === 'test_rush') && (
                     <div className="mt-6 pt-6 border-t border-gray-100 grid grid-cols-3 gap-2">
-                        <div className="bg-blue-50 p-2 rounded-lg text-xs text-blue-800 font-bold"><p className="text-[10px] uppercase text-blue-400 mb-1">Def</p>{currentWord.definition?.slice(0,40)}...</div>
-                        <div className="bg-green-50 p-2 rounded-lg text-xs text-green-800 font-bold"><p className="text-[10px] uppercase text-green-400 mb-1">Use</p>"{currentWord.usage?.slice(0,40)}..."</div>
-                        <div className="bg-purple-50 p-2 rounded-lg text-xs text-purple-800 font-bold"><p className="text-[10px] uppercase text-purple-400 mb-1">Origin</p>{currentWord.etymology?.slice(0,20)}...</div>
+                        {/* Replaced Text with Speak Buttons */}
+                        <button onClick={() => speak(currentWord.definition)} className="bg-blue-50 p-3 rounded-xl text-xs text-blue-800 font-bold hover:bg-blue-100 transition flex flex-col items-center">
+                            <span className="text-[10px] uppercase text-blue-400 mb-1">Def</span><Mic size={20}/>
+                        </button>
+                        <button onClick={() => speak(currentWord.usage)} className="bg-green-50 p-3 rounded-xl text-xs text-green-800 font-bold hover:bg-green-100 transition flex flex-col items-center">
+                            <span className="text-[10px] uppercase text-green-400 mb-1">Use</span><Mic size={20}/>
+                        </button>
+                        <button onClick={() => speak(currentWord.etymology)} className="bg-purple-50 p-3 rounded-xl text-xs text-purple-800 font-bold hover:bg-purple-100 transition flex flex-col items-center">
+                            <span className="text-[10px] uppercase text-purple-400 mb-1">Origin</span><Mic size={20}/>
+                        </button>
                     </div>
                 )}
             </div>
