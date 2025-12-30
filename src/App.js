@@ -6,7 +6,7 @@ import {
   BookOpen, Trophy, Clock, Gamepad2, 
   Sparkles, Plus, RefreshCw, Key, Menu,
   SkipForward, StopCircle, Mic, Beaker,
-  AlertTriangle, Power
+  AlertTriangle, Power, Heart
 } from 'lucide-react';
 import logo from './logo.jpg'; 
 
@@ -80,7 +80,7 @@ const App = () => {
   const [wordBank, setWordBank] = useState({}); 
   const [results, setResults] = useState([]); 
   const [activeSession, setActiveSession] = useState({ active: false }); 
-  const [allSessions, setAllSessions] = useState([]); // For Admin Monitor
+  const [allSessions, setAllSessions] = useState([]); 
 
   // Forms
   const [loginForm, setLoginForm] = useState({ username: '', password: '', role: 'student' });
@@ -99,7 +99,8 @@ const App = () => {
 
   const [loadingAI, setLoadingAI] = useState(false); 
   const [feedbackState, setFeedbackState] = useState(null); 
-  const [sessionConfig, setSessionConfig] = useState({ mode: 'test_standard', globalTimer: 60, timerPerWord: 0 });
+  // Added wordLimit to sessionConfig
+  const [sessionConfig, setSessionConfig] = useState({ mode: 'test_standard', globalTimer: 60, timerPerWord: 0, wordLimit: 10 });
   const [testSessions, setTestSessions] = useState({}); 
 
   const [game, setGame] = useState({ 
@@ -122,7 +123,6 @@ const App = () => {
 
       if(currentUser?.role === 'admin') {
           fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers).catch(e => console.log("Users offline"));
-          // Fetch ALL sessions for Admin Monitor
           fetch(`${API_URL}/sessions`).then(r => r.json()).then(setAllSessions).catch(console.error);
       }
   };
@@ -146,7 +146,6 @@ const App = () => {
                   .then(data => setActiveSession(data));
           }, 3000); 
       }
-      // Poll active sessions for Admin Monitor
       if (currentUser?.role === 'admin' && activeView === 'admin_dash' && adminTab === 'monitor') {
          poller = setInterval(() => {
             fetch(`${API_URL}/sessions`).then(r => r.json()).then(setAllSessions);
@@ -337,12 +336,9 @@ const App = () => {
           body: JSON.stringify({ class_id: targetClass, active: isActive, ...sessionConfig })
       });
       setTestSessions(prev => ({ ...prev, [targetClass]: { active: isActive, ...sessionConfig } }));
-      
-      // If Admin is monitoring, refresh list immediately
       if(currentUser.role === 'admin') {
          fetch(`${API_URL}/sessions`).then(r => r.json()).then(setAllSessions);
       }
-      
       if(isActive) alert("Test Started!");
   };
 
@@ -355,25 +351,27 @@ const App = () => {
     let mode, gameType, timer;
     let sessionWords = [];
 
-    // STRICT FILTERING LOGIC
     if (origin === 'test_live') {
         if (!activeSession.active) return alert("Test Locked");
         mode = activeSession.mode; 
         gameType = mode.includes('rush') ? 'spelling' : (mode.split('_')[1] || 'spelling');
         timer = mode === 'test_rush' ? activeSession.globalTimer : activeSession.timerPerWord;
-        // TEST MODE: ONLY ADMIN APPROVED WORDS
+        
         sessionWords = words.filter(w => w.source === 'admin'); 
+        sessionWords = sessionWords.sort(() => 0.5 - Math.random());
+        // Use teacher defined word limit
+        const limit = activeSession.wordLimit === 999 ? sessionWords.length : activeSession.wordLimit;
+        sessionWords = sessionWords.slice(0, limit || 10);
+        
         if (sessionWords.length === 0) return alert("No approved test words available.");
     } else if (origin === 'practice') {
         mode = 'practice'; gameType = 'spelling'; timer = practiceTimer;
-        // PRACTICE MODE: ADMIN + TEACHER WORDS
         sessionWords = words.filter(w => w.source === 'admin' || w.source === 'teacher');
         sessionWords = sessionWords.sort(() => 0.5 - Math.random());
         const limit = practiceWordCount === 'all' ? sessionWords.length : parseInt(practiceWordCount);
         sessionWords = sessionWords.slice(0, limit);
         if (sessionWords.length === 0) return alert("Not enough words available.");
     } else {
-        // FUN GAMES: ADMIN + TEACHER WORDS
         mode = 'fun'; gameType = origin; timer = 0;
         sessionWords = words.filter(w => w.source === 'admin' || w.source === 'teacher');
         sessionWords = sessionWords.sort(() => 0.5 - Math.random()).slice(0, 10);
@@ -387,24 +385,32 @@ const App = () => {
     setActiveView('game_interface');
   };
 
-  const submitWord = (action = 'submit') => {
+  const submitWord = (overrideInput = null) => {
     const currentWord = game.words[game.index];
     let isCorrect = false;
 
-    if (action === 'submit') {
-        const cleanInput = game.input.trim().toLowerCase();
+    // 1. Determine Correctness
+    if (overrideInput === 'skip' || overrideInput === 'timeout') {
+        isCorrect = false;
+    } else if (typeof overrideInput === 'boolean') {
+        // Direct boolean from Quiz/Origin buttons
+        isCorrect = overrideInput; 
+    } else {
+        // String input from Text Box
+        const cleanInput = (overrideInput || game.input).trim().toLowerCase();
         const cleanWord = currentWord.word.toLowerCase();
-        
-        if (game.gameType === 'quiz') isCorrect = game.input === currentWord.definition; 
-        else if (game.gameType === 'origin') isCorrect = game.input === currentWord.etymology;
+        if (game.gameType === 'quiz') isCorrect = false; // Should use boolean path
+        else if (game.gameType === 'origin') isCorrect = false; // Should use boolean path
         else isCorrect = cleanInput === cleanWord;
-    } 
+    }
     
+    // 2. Feedback Animation
     setFeedbackState(isCorrect ? 'correct' : 'wrong');
     setTimeout(() => setFeedbackState(null), 500);
 
     if (game.mode === 'practice' || game.mode === 'fun') speak(isCorrect ? "Correct!" : "Incorrect");
 
+    // 3. Score & Progress
     const nextScore = isCorrect ? game.score + 1 : game.score;
     const nextIdx = game.index + 1;
 
@@ -427,6 +433,7 @@ const App = () => {
   };
 
   const finishGame = async (finalScore) => {
+    // FORCE END: Calculate exact time used so far
     const totalTime = (Date.now() - game.startTime) / 1000; 
     setGame(prev => ({...prev, active: false}));
 
@@ -445,7 +452,8 @@ const App = () => {
             timeTaken: totalTime
         }]);
     }
-    alert(`Complete! Score: ${finalScore}/${game.words.length}`);
+    // Only alert if natural finish, otherwise just exit for "Stop" button
+    if (finalScore !== undefined) alert(`Complete! Score: ${finalScore}/${game.words.length}`);
     setActiveView('student_dash');
   };
 
@@ -466,11 +474,28 @@ const App = () => {
   }, [game.active, game.timeLeft]);
 
   const currentWord = game.words[game.index];
+  
+  // FIX: Quiz Options Logic (Always 4 Options)
   const quizOptions = useMemo(() => {
     if (!currentWord || (game.gameType !== 'quiz' && game.gameType !== 'origin')) return [];
+    
     const field = game.gameType === 'quiz' ? 'definition' : 'etymology';
-    const otherWords = game.words.filter(w => w._id !== currentWord._id).sort(() => 0.5 - Math.random()).slice(0, 3);
-    return [currentWord[field], ...otherWords.map(w => w[field] || "N/A")].sort(() => Math.random() - 0.5);
+    const correctAnswer = currentWord[field];
+
+    // Filter out current word
+    const pool = game.words.filter(w => w._id !== currentWord._id);
+    
+    // Shuffle pool and take 3
+    const detractors = pool.sort(() => 0.5 - Math.random()).slice(0, 3);
+    
+    // Combine
+    const options = [
+        { text: correctAnswer, isCorrect: true },
+        ...detractors.map(w => ({ text: w[field] || "N/A", isCorrect: false }))
+    ];
+
+    // Shuffle final options
+    return options.sort(() => Math.random() - 0.5);
   }, [currentWord, game.gameType, game.words.length]);
 
   const Leaderboard = ({ type, data }) => {
@@ -501,6 +526,13 @@ const App = () => {
         <div className="absolute top-10 left-10 text-4xl opacity-20 animate-float delay-100">🐝</div>
         <div className="absolute bottom-20 right-20 text-5xl opacity-20 animate-float delay-200">🐝</div>
     </div>
+  );
+  
+  const WelcomeCard = ({ title, message, color }) => (
+      <div className={`p-6 rounded-2xl mb-6 flex items-start gap-4 shadow-sm border-l-8 border-${color}-500 bg-white`}>
+          <div className={`p-3 rounded-full bg-${color}-100 text-${color}-600`}><Heart fill="currentColor" size={24}/></div>
+          <div><h2 className={`text-xl font-bold text-${color}-900 mb-1`}>{title}</h2><p className="text-gray-600 leading-relaxed">{message}</p></div>
+      </div>
   );
 
   // --- VIEWS ---
@@ -557,6 +589,9 @@ const App = () => {
                 ))}
             </nav>
             <main className="flex-1 p-8 overflow-y-auto w-full animate-slide-in">
+                {/* WELCOME MESSAGE */}
+                <WelcomeCard title="Welcome, Admin!" message="You have full control over the hive. Manage users, curate the curriculum, and monitor live tests to ensure everything runs smoothly. Your leadership makes a difference!" color="yellow"/>
+                
                 {['students', 'teachers'].includes(adminTab) && (
                     <div className="space-y-6">
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
@@ -620,35 +655,40 @@ const App = () => {
                         <select className="w-full p-4 bg-red-50 rounded-xl font-bold text-lg mb-6" value={adminSelectedTestClass} onChange={e => setAdminSelectedTestClass(e.target.value)}><option value="">-- Select Target Class --</option>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select>
                         {adminSelectedTestClass && (
                             <div className="animate-slide-in">
-                                <div className="grid md:grid-cols-2 gap-6 mb-6">
+                                <div className="grid md:grid-cols-3 gap-6 mb-6">
                                     <div><label className="block font-bold mb-2">Mode</label><select className="w-full p-3 border rounded-lg" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}><option value="test_standard">Standard</option><option value="test_rush">Rush Hour</option><option value="test_unscramble">Unscramble</option><option value="test_quiz">Quiz</option></select></div>
                                     <div><label className="block font-bold mb-2">Timer</label>{sessionConfig.mode === 'test_rush' ? <input type="number" className="w-full p-3 border rounded-lg" value={sessionConfig.globalTimer} onChange={e=>setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/> : <input type="number" className="w-full p-3 border rounded-lg" value={sessionConfig.timerPerWord} onChange={e=>setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>}</div>
+                                    {/* UPDATED: Test Word Limit */}
+                                    <div><label className="block font-bold mb-2">Test Words</label><select className="w-full p-3 border rounded-lg" value={sessionConfig.wordLimit} onChange={e=>setSessionConfig({...sessionConfig, wordLimit: parseInt(e.target.value)})}>
+                                        <option value="10">10 Words</option><option value="20">20 Words</option><option value="50">50 Words</option><option value="100">100 Words</option><option value="999">All Words</option>
+                                    </select></div>
                                 </div>
                                 <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} className={`w-full py-6 rounded-2xl font-black text-2xl shadow-xl transform active:scale-95 transition-all ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>{testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}</button>
                             </div>
                         )}
                     </div>
                 )}
-                {/* NEW: ADMIN MONITOR TAB */}
+                {/* UPDATED: Monitor now iterates CLASSES to avoid ghost tests */}
                 {adminTab === 'monitor' && (
                     <div className="bg-white p-8 rounded-3xl shadow-lg border border-yellow-200">
                         <h2 className="text-2xl font-black mb-6 text-red-600 flex items-center gap-2"><AlertTriangle/> Live Test Monitor</h2>
                         <div className="grid gap-4">
-                            {allSessions.filter(s => s.active).length === 0 ? (
-                                <div className="text-center p-8 bg-green-50 rounded-xl text-green-700 font-bold">No Active Tests Running</div>
-                            ) : (
-                                allSessions.filter(s => s.active).map(s => (
-                                    <div key={s.class_id} className="flex justify-between items-center bg-red-50 p-4 rounded-xl border border-red-200 animate-pulse">
+                            {classes.map(clsName => {
+                                const activeSess = allSessions.find(s => s.class_id === clsName && s.active);
+                                return (
+                                    <div key={clsName} className={`flex justify-between items-center p-4 rounded-xl border ${activeSess ? 'bg-red-50 border-red-200 animate-pulse' : 'bg-gray-50 border-gray-100'}`}>
                                         <div>
-                                            <h3 className="text-xl font-black text-red-900">{s.class_id}</h3>
-                                            <p className="text-red-700 text-sm font-bold uppercase">{s.mode}</p>
+                                            <h3 className={`text-xl font-black ${activeSess ? 'text-red-900' : 'text-gray-400'}`}>{clsName}</h3>
+                                            <p className="text-xs font-bold uppercase">{activeSess ? `ACTIVE: ${activeSess.mode}` : 'INACTIVE'}</p>
                                         </div>
-                                        <button onClick={() => updateSession(s.class_id, false)} className="bg-red-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-red-700 flex items-center gap-2">
-                                            <Power size={20}/> FORCE STOP
-                                        </button>
+                                        {activeSess ? (
+                                            <button onClick={() => updateSession(clsName, false)} className="bg-red-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-red-700 flex items-center gap-2">
+                                                <Power size={20}/> FORCE STOP
+                                            </button>
+                                        ) : <span className="text-gray-300 font-bold">Idle</span>}
                                     </div>
-                                ))
-                            )}
+                                );
+                            })}
                         </div>
                     </div>
                 )}
@@ -684,19 +724,26 @@ const App = () => {
                 <button onClick={() => setTeacherTab('results')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'results' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Results</button>
             </div>
             <div className="max-w-4xl mx-auto grid gap-6 animate-slide-in">
+                
+                {/* WELCOME MESSAGE */}
+                <WelcomeCard title={`Hello, Teacher ${currentUser.name.split(' ')[0]}!`} message="Ready to inspire your students? Manage your class test settings, add practice words to your jar, and track progress here. Let's make learning spelling fun!" color="green"/>
+                
                 {teacherTab === 'test_control' && (
                 <div className="bg-white p-8 rounded-[2rem] shadow-xl border-b-8 border-green-600">
                     <h3 className="text-2xl font-black mb-6 text-green-800 flex items-center gap-2"><Trophy className="text-yellow-500"/> Class Control</h3>
-                    <div className="grid md:grid-cols-2 gap-6 mb-6">
+                    <div className="grid md:grid-cols-3 gap-6 mb-6">
                          <div><label className="font-bold block mb-2">Mode</label><select className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}><option value="test_standard">Standard</option><option value="test_rush">Rush Hour</option><option value="test_unscramble">Unscramble</option><option value="test_quiz">Quiz</option></select></div>
                          <div><label className="font-bold block mb-2">Timer</label><input type="number" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.mode === 'test_rush' ? sessionConfig.globalTimer : sessionConfig.timerPerWord} onChange={e=>setSessionConfig(prev => sessionConfig.mode === 'test_rush' ? {...prev, globalTimer: parseInt(e.target.value)} : {...prev, timerPerWord: parseInt(e.target.value)})}/></div>
+                         {/* UPDATED: Test Word Limit */}
+                         <div><label className="font-bold block mb-2">Limit</label><select className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.wordLimit} onChange={e=>setSessionConfig({...sessionConfig, wordLimit: parseInt(e.target.value)})}>
+                            <option value="10">10 Words</option><option value="20">20 Words</option><option value="50">50 Words</option><option value="100">100 Words</option><option value="999">All Words</option>
+                         </select></div>
                   </div>
                   <button onClick={() => updateSession(currentUser.class_id, !session.active)} className={`w-full py-4 rounded-xl font-black text-lg transition-all transform active:scale-95 ${session.active ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white hover:bg-green-600'}`}>
                       {session.active ? 'STOP TEST' : 'START TEST'}
                   </button>
               </div>
               )}
-              {/* NEW: WORD JAR TAB FOR TEACHERS */}
               {teacherTab === 'word_jar' && (
                  <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
                     <h3 className="text-xl font-black mb-4 flex items-center gap-2 text-purple-700"><Beaker/> Practice Word Jar</h3>
@@ -743,12 +790,17 @@ const App = () => {
             <button onClick={handleLogout} className="bg-white text-red-500 px-4 py-2 rounded-xl font-bold shadow-sm hover:bg-red-50">Log Out</button>
         </header>
         <div className="grid gap-6 w-full max-w-md relative z-10 animate-slide-in">
+            
+            {/* WELCOME MESSAGE */}
+            <WelcomeCard title="Ready to Spell?" message="Study hard, play games, and show off your skills! Select practice mode to warm up or wait for your teacher to start a test. You've got this!" color="blue"/>
+
             <div className="bg-white p-6 rounded-[2rem] shadow-lg border-b-8 border-green-500 relative overflow-hidden group hover:scale-[1.02] transition-transform duration-300">
                 <div className="absolute -right-4 -top-4 text-green-100 opacity-50 group-hover:scale-110 transition-transform"><BookOpen size={100}/></div>
                 <h2 className="text-2xl font-black text-green-800 relative z-10">Practice Mode</h2>
                 <div className="mt-4 flex flex-col gap-2 relative z-10">
                     <div className="flex items-center justify-between"><div className="flex items-center gap-2"><Clock size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Timer</span></div><select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}><option value={0}>None</option><option value={3}>3s</option><option value={5}>5s</option><option value={10}>10s</option><option value={30}>30s</option></select></div>
-                    <div className="flex items-center justify-between"><div className="flex items-center gap-2"><Sparkles size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Words</span></div><select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceWordCount} onChange={e => setPracticeWordCount(e.target.value)}><option value="5">5 Words</option><option value="10">10 Words</option><option value="20">20 Words</option><option value="all">All Words</option></select></div>
+                    {/* UPDATED: Practice Word Limit */}
+                    <div className="flex items-center justify-between"><div className="flex items-center gap-2"><Sparkles size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Words</span></div><select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceWordCount} onChange={e => setPracticeWordCount(e.target.value)}><option value="5">5 Words</option><option value="10">10 Words</option><option value="20">20 Words</option><option value="50">50 Words</option><option value="100">100 Words</option><option value="all">All Words</option></select></div>
                 </div>
                 <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-600 transform active:scale-95 transition-all relative z-10">Start Studying</button>
             </div>
@@ -800,7 +852,12 @@ const App = () => {
                 
                 {(game.gameType === 'quiz' || game.gameType === 'origin') ? (
                     <div className="grid gap-3">
-                        {quizOptions.map((opt, i) => (<button key={i} onClick={() => { setGame({...game, input: opt}); setTimeout(() => submitWord(), 100); }} className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95 break-words whitespace-normal h-auto">{opt}</button>))}
+                        {/* UPDATED: Quiz uses direct boolean check passed to submitWord */}
+                        {quizOptions.map((opt, i) => (
+                            <button key={i} onClick={() => submitWord(opt.isCorrect)} className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95 break-words whitespace-normal h-auto">
+                                {opt.text}
+                            </button>
+                        ))}
                     </div>
                 ) : (
                     <>
@@ -808,6 +865,7 @@ const App = () => {
                         <div className="grid grid-cols-2 gap-2 mb-4">
                              <button onClick={() => submitWord('submit')} className="col-span-2 bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 transform hover:-translate-y-1 active:translate-y-0 transition-all">SUBMIT</button>
                              <button onClick={() => submitWord('skip')} className="bg-gray-100 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-200 flex items-center justify-center gap-2"><SkipForward size={18}/> Skip</button>
+                             {/* UPDATED: Stop Button ends test completely */}
                              <button onClick={() => finishGame(game.score)} className="bg-red-100 text-red-600 font-bold py-3 rounded-xl hover:bg-red-200 flex items-center justify-center gap-2"><StopCircle size={18}/> Stop</button>
                         </div>
                     </>
