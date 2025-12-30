@@ -245,18 +245,30 @@ const App = () => {
       localStorage.removeItem('hms_user_session');
   };
 
-  // --- CLASS MGMT (DB SYNCED) ---
+ // --- CLASS MGMT (DB SYNCED) ---
   const handleAddClass = async () => {
       const name = prompt("Enter new Class Name (e.g., Year 7):");
       if(!name) return;
+      
       try {
         const res = await fetch(`${API_URL}/classes`, {
-            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ name })
         });
-        if(res.ok) refreshData();
-        else alert("Class might already exist.");
+
+        const data = await res.json(); // Read the server response
+
+        if(res.ok) {
+            refreshData();
+            alert("Success! Class added.");
+        } else {
+            // Show the ACTUAL error from the server
+            alert(`Error: ${data.message || data.error || "Unknown Server Error"}`);
+        }
       } catch (error) {
-          alert("Server Error: Cannot connect to database.");
+          console.error("Add Class Error:", error);
+          alert("Connection Failed: Ensure the backend terminal (node server.js) is running.");
       }
   };
    
