@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Shield, User, LogOut, Trash2, 
+  User, LogOut, Trash2, 
   Volume2, X, Eye, EyeOff, Edit3, 
   BookOpen, Trophy, Clock, Gamepad2, 
   Sparkles, Plus, RefreshCw, Key, Menu 
@@ -585,7 +585,16 @@ const App = () => {
                                         <input placeholder="Antonyms" value={newWordForm.antonyms} onChange={e => setNewWordForm({...newWordForm, antonyms: e.target.value})} className="bg-gray-50 p-3 rounded-xl"/>
                                         <input placeholder="Origin" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-gray-50 p-3 rounded-xl md:col-span-2"/>
                                     </div>
-                                    <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`w-full text-white font-bold py-4 rounded-xl shadow-lg ${editingWordId ? 'bg-orange-500' : 'bg-green-600'}`}>{editingWordId ? 'UPDATE' : 'ADD'}</button>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`flex-1 text-white font-bold py-4 rounded-xl shadow-lg ${editingWordId ? 'bg-orange-500' : 'bg-green-600'}`}>
+                                            {editingWordId ? 'UPDATE' : 'ADD'}
+                                        </button>
+                                        {editingWordId && (
+                                            <button onClick={cancelEditing} className="bg-gray-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:bg-gray-600">
+                                                CANCEL
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="space-y-2">
                                     {(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (
@@ -673,7 +682,8 @@ const App = () => {
               )}
           </div>
       </div>
-  );
+    );
+  }
 
   if (activeView === 'student_dash') return (
       <div className="min-h-screen bg-yellow-50 p-6 flex flex-col items-center font-sans">
