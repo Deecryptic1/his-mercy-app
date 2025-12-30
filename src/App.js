@@ -38,7 +38,7 @@ const App = () => {
     window.speechSynthesis.speak(u);
   };
 
-  const API_URL = 'http://localhost:5000/api';
+  const API_URL = 'https://school-app-backend.onrender.com/api';
   
   // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
