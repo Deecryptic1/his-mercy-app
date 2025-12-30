@@ -5,7 +5,8 @@ import {
   Volume2, X, Eye, EyeOff, Edit3, 
   BookOpen, Trophy, Clock, Gamepad2, 
   Sparkles, Plus, RefreshCw, Key, Menu,
-  SkipForward, StopCircle, Mic
+  SkipForward, StopCircle, Mic, Beaker,
+  AlertTriangle, Power
 } from 'lucide-react';
 import logo from './logo.jpg'; 
 
@@ -39,10 +40,14 @@ const App = () => {
   useEffect(() => {
     const loadVoices = () => {
       const available = window.speechSynthesis.getVoices();
-      const profile = available.find(v => 
-        (v.name.includes('UK') || v.name.includes('Great Britain')) && v.name.includes('Female')
-      ) || available.find(v => v.lang === 'en-GB') || available[0];
-      setSelectedVoice(profile);
+      const profile = 
+        available.find(v => v.name === 'Google UK English Female') || 
+        available.find(v => v.name === 'Google US English') ||
+        available.find(v => v.name.includes('Google') && v.name.includes('Female')) ||
+        available.find(v => v.name.includes('Zira')) || 
+        available.find(v => v.name.includes('Samantha')) ||
+        available.find(v => v.name.includes('Female'));
+      setSelectedVoice(profile || available[0]);
     };
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
@@ -53,7 +58,7 @@ const App = () => {
     if(!text) return;
     const u = new SpeechSynthesisUtterance(text);
     if (selectedVoice) u.voice = selectedVoice;
-    u.pitch = 1.2; u.rate = 0.9; 
+    u.pitch = 1.0; u.rate = 0.9; u.volume = 1; 
     window.speechSynthesis.speak(u);
   };
 
@@ -75,6 +80,7 @@ const App = () => {
   const [wordBank, setWordBank] = useState({}); 
   const [results, setResults] = useState([]); 
   const [activeSession, setActiveSession] = useState({ active: false }); 
+  const [allSessions, setAllSessions] = useState([]); // For Admin Monitor
 
   // Forms
   const [loginForm, setLoginForm] = useState({ username: '', password: '', role: 'student' });
@@ -89,21 +95,17 @@ const App = () => {
   
   // Practice Config
   const [practiceTimer, setPracticeTimer] = useState(0);
-  const [practiceWordCount, setPracticeWordCount] = useState('10'); // New Word Count
+  const [practiceWordCount, setPracticeWordCount] = useState('10'); 
 
   const [loadingAI, setLoadingAI] = useState(false); 
-
-  // UI Animation States
   const [feedbackState, setFeedbackState] = useState(null); 
-
-  // Exam Config
   const [sessionConfig, setSessionConfig] = useState({ mode: 'test_standard', globalTimer: 60, timerPerWord: 0 });
   const [testSessions, setTestSessions] = useState({}); 
 
   const [game, setGame] = useState({ 
     active: false, words: [], index: 0, score: 0, input: '', 
     mode: 'practice', gameType: 'spelling', timeLeft: 0,
-    startTime: 0 // Track total time
+    startTime: 0 
   });
 
   // --- DATA SYNCING ---
@@ -120,6 +122,8 @@ const App = () => {
 
       if(currentUser?.role === 'admin') {
           fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers).catch(e => console.log("Users offline"));
+          // Fetch ALL sessions for Admin Monitor
+          fetch(`${API_URL}/sessions`).then(r => r.json()).then(setAllSessions).catch(console.error);
       }
   };
 
@@ -142,8 +146,14 @@ const App = () => {
                   .then(data => setActiveSession(data));
           }, 3000); 
       }
+      // Poll active sessions for Admin Monitor
+      if (currentUser?.role === 'admin' && activeView === 'admin_dash' && adminTab === 'monitor') {
+         poller = setInterval(() => {
+            fetch(`${API_URL}/sessions`).then(r => r.json()).then(setAllSessions);
+         }, 3000);
+      }
       return () => clearInterval(poller);
-  }, [currentUser, activeView]);
+  }, [currentUser, activeView, adminTab]);
 
   useEffect(() => {
     if (currentUser) refreshData();
@@ -186,12 +196,11 @@ const App = () => {
       const newPass = prompt(`Enter NEW Password for ${userName}:`);
       if (!newPass) return;
       try {
-          const res = await fetch(`${API_URL}/users/${userId}/reset-password`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
+          await fetch(`${API_URL}/users/${userId}/reset-password`, {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ newPassword: newPass })
           });
-          if (res.ok) alert(`Success! Password updated.`);
+          alert(`Success! Password updated.`);
       } catch (e) { alert("Server Error."); }
   };
 
@@ -199,9 +208,7 @@ const App = () => {
       if(!window.confirm(`Delete ${userName}?`)) return;
       try {
           const res = await fetch(`${API_URL}/users/${userId}`, { method: 'DELETE' });
-          if(res.ok) {
-              setUsers(prev => prev.filter(u => u._id !== userId));
-          }
+          if(res.ok) setUsers(prev => prev.filter(u => u._id !== userId));
       } catch(e) { alert("Connection Error."); }
   };
 
@@ -209,18 +216,15 @@ const App = () => {
     if (!userForm.name || !userForm.username || !userForm.password) return alert("All fields required");
     try {
         const res = await fetch(`${API_URL}/users`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...userForm, role: adminTab.slice(0,-1) }) 
         });
         if (res.ok) {
             alert("User Saved!");
             setUserForm({ name: '', username: '', password: '', role: 'student', class_id: '' });
             refreshData(); 
-        } else {
-            alert("Save Failed.");
-        }
-    } catch (e) { alert("Connection Error - Is the backend running?"); }
+        } else alert("Save Failed.");
+    } catch (e) { alert("Connection Error."); }
   };
 
   const handleLogin = async () => {
@@ -234,8 +238,7 @@ const App = () => {
     }
     try {
         const response = await fetch(`${API_URL}/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(loginForm)
         });
         const data = await response.json();
@@ -245,12 +248,8 @@ const App = () => {
             setActiveView(data.role === 'student' ? 'student_dash' : data.role === 'teacher' ? 'teacher_dash' : 'admin_dash');
             setLoginForm({ username: '', password: '', role: 'student' });
             refreshData();
-        } else {
-            alert("Login Failed: " + data.message);
-        }
-    } catch (error) {
-        alert("Server Error. Is the backend running?");
-    }
+        } else alert("Login Failed: " + data.message);
+    } catch (error) { alert("Server Error."); }
   };
 
   const handleLogout = () => {
@@ -259,18 +258,14 @@ const App = () => {
       localStorage.removeItem('hms_user_session');
   };
 
- // --- CLASS MGMT ---
   const handleAddClass = async () => {
       const name = prompt("Enter new Class Name (e.g., Year 7):");
       if(!name) return;
       try {
         const res = await fetch(`${API_URL}/classes`, {
-            method: 'POST', 
-            headers: {'Content-Type': 'application/json'}, 
-            body: JSON.stringify({ name })
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
         });
-        const data = await res.json(); 
-        if(res.ok) { refreshData(); } else { alert(`Error: ${data.message || "Exists/Error"}`); }
+        if(res.ok) refreshData(); else alert(`Error`);
       } catch (error) { alert("Connection Failed."); }
   };
     
@@ -335,14 +330,20 @@ const App = () => {
       } catch (e) { alert("Failed to delete word"); }
   };
 
-  // --- LIVE EXAM ---
+  // --- LIVE EXAM CONTROL ---
   const updateSession = async (targetClass, isActive) => {
       await fetch(`${API_URL}/session`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ class_id: targetClass, active: isActive, ...sessionConfig })
       });
       setTestSessions(prev => ({ ...prev, [targetClass]: { active: isActive, ...sessionConfig } }));
-      alert(isActive ? "Test Activated!" : "Test Stopped.");
+      
+      // If Admin is monitoring, refresh list immediately
+      if(currentUser.role === 'admin') {
+         fetch(`${API_URL}/sessions`).then(r => r.json()).then(setAllSessions);
+      }
+      
+      if(isActive) alert("Test Started!");
   };
 
   // --- GAME LOGIC ---
@@ -352,37 +353,41 @@ const App = () => {
     if (words.length === 0) return alert("No words found.");
 
     let mode, gameType, timer;
-    let sessionWords = [...words];
+    let sessionWords = [];
 
+    // STRICT FILTERING LOGIC
     if (origin === 'test_live') {
         if (!activeSession.active) return alert("Test Locked");
         mode = activeSession.mode; 
         gameType = mode.includes('rush') ? 'spelling' : (mode.split('_')[1] || 'spelling');
         timer = mode === 'test_rush' ? activeSession.globalTimer : activeSession.timerPerWord;
+        // TEST MODE: ONLY ADMIN APPROVED WORDS
         sessionWords = words.filter(w => w.source === 'admin'); 
+        if (sessionWords.length === 0) return alert("No approved test words available.");
     } else if (origin === 'practice') {
         mode = 'practice'; gameType = 'spelling'; timer = practiceTimer;
-        // Logic for word count selection
-        sessionWords = sessionWords.sort(() => 0.5 - Math.random()); // Randomize first
+        // PRACTICE MODE: ADMIN + TEACHER WORDS
+        sessionWords = words.filter(w => w.source === 'admin' || w.source === 'teacher');
+        sessionWords = sessionWords.sort(() => 0.5 - Math.random());
         const limit = practiceWordCount === 'all' ? sessionWords.length : parseInt(practiceWordCount);
         sessionWords = sessionWords.slice(0, limit);
         if (sessionWords.length === 0) return alert("Not enough words available.");
     } else {
+        // FUN GAMES: ADMIN + TEACHER WORDS
         mode = 'fun'; gameType = origin; timer = 0;
+        sessionWords = words.filter(w => w.source === 'admin' || w.source === 'teacher');
         sessionWords = sessionWords.sort(() => 0.5 - Math.random()).slice(0, 10);
     }
 
     setGame({
       active: true, words: sessionWords,
       index: 0, score: 0, input: '', mode, gameType, 
-      timeLeft: timer,
-      startTime: Date.now()
+      timeLeft: timer, startTime: Date.now()
     });
     setActiveView('game_interface');
   };
 
   const submitWord = (action = 'submit') => {
-    // action: 'submit' | 'skip' | 'timeout'
     const currentWord = game.words[game.index];
     let isCorrect = false;
 
@@ -390,16 +395,10 @@ const App = () => {
         const cleanInput = game.input.trim().toLowerCase();
         const cleanWord = currentWord.word.toLowerCase();
         
-        if (game.gameType === 'quiz') {
-            // FIX: Robust check for quiz
-            isCorrect = game.input === currentWord.definition; 
-        }
+        if (game.gameType === 'quiz') isCorrect = game.input === currentWord.definition; 
         else if (game.gameType === 'origin') isCorrect = game.input === currentWord.etymology;
         else isCorrect = cleanInput === cleanWord;
-    } else {
-        // Skip or Timeout counts as wrong
-        isCorrect = false; 
-    }
+    } 
     
     setFeedbackState(isCorrect ? 'correct' : 'wrong');
     setTimeout(() => setFeedbackState(null), 500);
@@ -409,11 +408,9 @@ const App = () => {
     const nextScore = isCorrect ? game.score + 1 : game.score;
     const nextIdx = game.index + 1;
 
-    // Check if game over
     if (nextIdx >= game.words.length) {
         finishGame(nextScore);
     } else {
-        // Reset Logic
         let nextTime = 0;
         if (game.mode.includes('test')) {
             nextTime = game.mode === 'test_rush' ? game.timeLeft : activeSession.timerPerWord;
@@ -422,21 +419,15 @@ const App = () => {
         }
 
         setGame(prev => ({ 
-            ...prev, 
-            index: nextIdx, 
-            score: nextScore, 
-            input: '', 
-            timeLeft: nextTime 
+            ...prev, index: nextIdx, score: nextScore, input: '', timeLeft: nextTime 
         }));
         
-        if(game.gameType === 'spelling') {
-            setTimeout(() => speak(game.words[nextIdx].word), 800);
-        }
+        if(game.gameType === 'spelling') setTimeout(() => speak(game.words[nextIdx].word), 800);
     }
   };
 
   const finishGame = async (finalScore) => {
-    const totalTime = (Date.now() - game.startTime) / 1000; // Seconds
+    const totalTime = (Date.now() - game.startTime) / 1000; 
     setGame(prev => ({...prev, active: false}));
 
     if (game.mode.includes('test')) {
@@ -458,7 +449,6 @@ const App = () => {
     setActiveView('student_dash');
   };
 
-  // Timer Effect
   useEffect(() => {
     let interval;
     if (game.active && game.timeLeft > 0) {
@@ -466,7 +456,7 @@ const App = () => {
         setGame(prev => {
           if (prev.timeLeft <= 1) {
              if (prev.mode === 'test_rush') { finishGame(prev.score); return { ...prev, active: false }; } 
-             else { submitWord('timeout'); return { ...prev, timeLeft: 0 }; } // Trigger timeout logic
+             else { submitWord('timeout'); return { ...prev, timeLeft: 0 }; }
           }
           return { ...prev, timeLeft: prev.timeLeft - 1 };
         });
@@ -476,25 +466,14 @@ const App = () => {
   }, [game.active, game.timeLeft]);
 
   const currentWord = game.words[game.index];
-  
-  // FIX: Quiz Options Memoization Logic
   const quizOptions = useMemo(() => {
     if (!currentWord || (game.gameType !== 'quiz' && game.gameType !== 'origin')) return [];
     const field = game.gameType === 'quiz' ? 'definition' : 'etymology';
-    // Get 3 random other words
-    const otherWords = game.words
-        .filter(w => w._id !== currentWord._id)
-        .sort(() => 0.5 - Math.random())
-        .slice(0, 3);
-    
-    // Combine and shuffle
-    return [currentWord[field], ...otherWords.map(w => w[field] || "N/A")]
-        .sort(() => Math.random() - 0.5);
-  }, [currentWord, game.gameType, game.words.length]); // Depends on currentWord
+    const otherWords = game.words.filter(w => w._id !== currentWord._id).sort(() => 0.5 - Math.random()).slice(0, 3);
+    return [currentWord[field], ...otherWords.map(w => w[field] || "N/A")].sort(() => Math.random() - 0.5);
+  }, [currentWord, game.gameType, game.words.length]);
 
-  // LEADERBOARD COMPONENT
   const Leaderboard = ({ type, data }) => {
-      // Logic: Sort by Score (Desc), then Time (Asc)
       const sorted = [...data].sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
           return (a.timeTaken || 9999) - (b.timeTaken || 9999);
@@ -502,22 +481,13 @@ const App = () => {
 
       return (
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 mb-6">
-              <h3 className="font-bold text-lg mb-4 text-green-800 flex items-center gap-2">
-                  <Trophy size={20} className="text-yellow-500"/> {type} Leaderboard
-              </h3>
+              <h3 className="font-bold text-lg mb-4 text-green-800 flex items-center gap-2"><Trophy size={20} className="text-yellow-500"/> {type} Leaderboard</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
-                    <thead className="bg-yellow-50 text-yellow-900">
-                        <tr><th className="p-2">Rank</th><th className="p-2">Name</th><th className="p-2">Score</th><th className="p-2">Time</th></tr>
-                    </thead>
+                    <thead className="bg-yellow-50 text-yellow-900"><tr><th className="p-2">Rank</th><th className="p-2">Name</th><th className="p-2">Score</th><th className="p-2">Time</th></tr></thead>
                     <tbody>
                         {sorted.map((r, i) => (
-                            <tr key={i} className={`border-b ${i===0?'bg-yellow-50 font-bold':''}`}>
-                                <td className="p-2">#{i+1}</td>
-                                <td className="p-2">{r.student} {type==='School' && <span className="text-xs text-gray-400">({r.class_id})</span>}</td>
-                                <td className="p-2 text-green-600">{r.score}/{r.total}</td>
-                                <td className="p-2 text-gray-500">{r.timeTaken ? `${Math.round(r.timeTaken)}s` : 'N/A'}</td>
-                            </tr>
+                            <tr key={i} className={`border-b ${i===0?'bg-yellow-50 font-bold':''}`}><td className="p-2">#{i+1}</td><td className="p-2">{r.student} {type==='School' && <span className="text-xs text-gray-400">({r.class_id})</span>}</td><td className="p-2 text-green-600">{r.score}/{r.total}</td><td className="p-2 text-gray-500">{r.timeTaken ? `${Math.round(r.timeTaken)}s` : 'N/A'}</td></tr>
                         ))}
                     </tbody>
                 </table>
@@ -526,19 +496,10 @@ const App = () => {
       );
   };
 
-  const FunEmptyState = ({ message }) => (
-      <div className="text-center p-8 border-2 border-dashed border-yellow-300 rounded-3xl bg-yellow-50 animate-float">
-          <div className="text-6xl mb-4">🐝</div>
-          <h3 className="text-xl font-bold text-yellow-800 mb-2">The Hive is Empty!</h3>
-          <p className="text-yellow-700">{message}</p>
-      </div>
-  );
-
   const BackgroundBees = () => (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-10 left-10 text-4xl opacity-20 animate-float delay-100">🐝</div>
         <div className="absolute bottom-20 right-20 text-5xl opacity-20 animate-float delay-200">🐝</div>
-        <div className="absolute top-1/2 left-1/4 text-3xl opacity-10 animate-float delay-300">🌸</div>
     </div>
   );
 
@@ -553,10 +514,7 @@ const App = () => {
                    <div className="hidden absolute inset-0 items-center justify-center text-6xl animate-bounce z-0">👑🐝</div>
                 </div>
                 <h2 className="text-green-700 font-bold tracking-widest uppercase mb-2 text-center text-sm">His Mercy Private School</h2>
-                <h1 className="text-4xl font-black text-yellow-500 text-center uppercase tracking-tighter drop-shadow-sm">
-                  Un<span className="text-6xl inline-block align-middle hover:scale-125 transition-transform animate-float">🐝</span>lievable<br/>
-                  <span className="text-2xl text-green-800">Spellings</span>
-                </h1>
+                <h1 className="text-4xl font-black text-yellow-500 text-center uppercase tracking-tighter drop-shadow-sm">Un<span className="text-6xl inline-block align-middle hover:scale-125 transition-transform animate-float">🐝</span>lievable<br/><span className="text-2xl text-green-800">Spellings</span></h1>
             </div>
             <div className="flex bg-gray-100 p-1 rounded-full mb-6 shadow-inner">
                 {['student', 'teacher', 'admin'].map(r => (
@@ -567,18 +525,11 @@ const App = () => {
                 ))}
             </div>
             <div className="space-y-4">
-                <div className="relative group">
-                    <User className="absolute left-4 top-3.5 text-gray-400 group-focus-within:text-yellow-500 transition-colors" size={20}/>
-                    <input type="text" placeholder="Username" className="w-full bg-gray-50 border-2 border-gray-100 pl-12 p-3 rounded-2xl font-bold outline-none focus:border-yellow-400 focus:bg-white transition-all text-gray-700"
-                        value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} />
-                </div>
+                <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-focus-within:text-yellow-500 transition-colors" size={20}/><input type="text" placeholder="Username" className="w-full bg-gray-50 border-2 border-gray-100 pl-12 p-3 rounded-2xl font-bold outline-none focus:border-yellow-400 focus:bg-white transition-all text-gray-700" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} /></div>
                 <div className="relative group">
                     <div className="absolute left-4 top-3.5 text-gray-400 group-focus-within:text-yellow-500 pointer-events-none"><Key size={20}/></div>
-                    <input type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-gray-50 border-2 border-gray-100 pl-12 p-3 rounded-2xl font-bold outline-none focus:border-yellow-400 focus:bg-white transition-all text-gray-700"
-                        value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
-                    <button onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-3.5 text-gray-400 hover:text-green-600">
-                        {showPassword ? <EyeOff size={20}/> : <Eye size={20}/>}
-                    </button>
+                    <input type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-gray-50 border-2 border-gray-100 pl-12 p-3 rounded-2xl font-bold outline-none focus:border-yellow-400 focus:bg-white transition-all text-gray-700" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
+                    <button onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-3.5 text-gray-400 hover:text-green-600">{showPassword ? <EyeOff size={20}/> : <Eye size={20}/>}</button>
                 </div>
                 <button onClick={handleLogin} className="w-full bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 hover:scale-[1.02] active:scale-95 transition-all text-lg tracking-wide">ENTER THE HIVE 🐝</button>
             </div>
@@ -593,35 +544,26 @@ const App = () => {
         <header className="bg-white border-b border-yellow-200 p-4 flex justify-between items-center sticky top-0 z-20 shadow-sm">
             <div className="flex items-center gap-2">
                 <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="md:hidden text-yellow-900 p-2 rounded hover:bg-yellow-100"><Menu size={24}/></button>
-                <img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/>
-                <h1 className="text-xl font-black text-yellow-900 flex items-center">Un<span className="text-3xl mx-1 hover:rotate-12 transition-transform">🐝</span>lievable</h1>
+                <img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><h1 className="text-xl font-black text-yellow-900 flex items-center">Un<span className="text-3xl mx-1 hover:rotate-12 transition-transform">🐝</span>lievable</h1>
             </div>
             <button onClick={handleLogout} className="text-red-500 font-bold flex gap-2 hover:bg-red-50 px-4 py-2 rounded-xl transition"><LogOut size={18}/> Exit</button>
         </header>
         <div className="flex flex-1 overflow-hidden relative">
             {showMobileMenu && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowMobileMenu(false)}></div>}
-            
             <nav className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-yellow-200 p-4 flex flex-col gap-2 shadow-2xl transform transition-transform duration-300 ease-in-out ${showMobileMenu ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 md:shadow-none md:z-0`}>
                 <div className="flex justify-between items-center mb-4 md:hidden"><span className="font-bold text-yellow-900 text-lg">Menu</span><button onClick={() => setShowMobileMenu(false)} className="text-gray-500 p-2"><X size={24}/></button></div>
-                {['students', 'teachers', 'classes', 'curriculum', 'exam_control', 'results'].map(tab => (
-                    <button key={tab} onClick={() => { setAdminTab(tab); setShowMobileMenu(false); }} className={`w-full text-left p-3 rounded-xl font-bold capitalize transition-all ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md translate-x-2' : 'text-gray-500 hover:bg-yellow-50 hover:translate-x-1'}`}>
-                        {tab.replace('_', ' ')}
-                    </button>
+                {['students', 'teachers', 'classes', 'curriculum', 'exam_control', 'monitor', 'results'].map(tab => (
+                    <button key={tab} onClick={() => { setAdminTab(tab); setShowMobileMenu(false); }} className={`w-full text-left p-3 rounded-xl font-bold capitalize transition-all ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md translate-x-2' : 'text-gray-500 hover:bg-yellow-50 hover:translate-x-1'}`}>{tab.replace('_', ' ')}</button>
                 ))}
             </nav>
-
             <main className="flex-1 p-8 overflow-y-auto w-full animate-slide-in">
                 {['students', 'teachers'].includes(adminTab) && (
                     <div className="space-y-6">
-                        {/* ... (Existing User Mgmt UI remains same) ... */}
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
                            <h2 className="font-bold text-lg text-yellow-900 mb-4">Add New {adminTab.slice(0, -1)}</h2>
                            <div className="grid md:grid-cols-3 gap-4 mb-4">
                                <input placeholder="Full Name" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400 transition-all"/>
-                               <select value={userForm.class_id} onChange={e => setUserForm({...userForm, class_id: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400">
-                                   <option value="">-- Class --</option>
-                                   {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                               </select>
+                               <select value={userForm.class_id} onChange={e => setUserForm({...userForm, class_id: e.target.value})} className="bg-yellow-50 p-3 rounded-xl outline-none focus:ring-2 ring-yellow-400"><option value="">-- Class --</option>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select>
                                <div className="flex items-center gap-2">
                                    <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>{isAutoID ? 'Auto' : 'Manual'}</button>
                                    {isAutoID && <button onClick={() => { if (!userForm.name) return alert("Name needed!"); const rnd = Math.floor(Math.random()*900)+100; const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,''); setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`})); }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200 hover:scale-110 transition-transform"><RefreshCw size={18}/></button>}
@@ -635,33 +577,22 @@ const App = () => {
                         </div>
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 overflow-x-auto">
                            {filteredUsers.length > 0 ? (
-                               <table className="w-full text-left min-w-[600px]">
-                                   <thead className="bg-yellow-50"><tr><th className="p-3">Name</th><th className="p-3">Class</th><th className="p-3">User</th><th className="p-3">Act</th></tr></thead>
-                                   <tbody>{filteredUsers.map(u => (
-                                       <tr key={u._id} className="border-b hover:bg-yellow-50 transition-colors"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></td></tr>
-                                   ))}</tbody>
-                               </table>
-                           ) : <FunEmptyState message="No users found." />}
+                               <table className="w-full text-left min-w-[600px]"><thead className="bg-yellow-50"><tr><th className="p-3">Name</th><th className="p-3">Class</th><th className="p-3">User</th><th className="p-3">Act</th></tr></thead><tbody>{filteredUsers.map(u => (<tr key={u._id} className="border-b hover:bg-yellow-50 transition-colors"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></td></tr>))}</tbody></table>
+                           ) : <div className="text-center p-8 text-gray-500">No users found.</div>}
                         </div>
                     </div>
                 )}
                 {adminTab === 'classes' && (
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 max-w-lg">
                         <div className="flex gap-2 mb-6"><button onClick={handleAddClass} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow hover:bg-green-600 flex justify-center items-center gap-2 transform active:scale-95 transition-all"><Plus/> Add New Class</button></div>
-                        {classes.length > 0 ? (
-                            <div className="space-y-2">{classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm hover:scale-105 transition-transform">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}</div>
-                        ) : <FunEmptyState message="No classes added yet!" />}
+                        <div className="space-y-2">{classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm hover:scale-105 transition-transform">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}</div>
                     </div>
                 )}
                 {adminTab === 'curriculum' && (
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
-                        <select value={selectedClassForWords} onChange={e => setSelectedClassForWords(e.target.value)} className="w-full p-3 bg-yellow-50 border border-yellow-200 rounded-xl font-bold mb-6 text-yellow-900 outline-none focus:ring-2 ring-yellow-400">
-                            <option value="">-- Select Class --</option>
-                            {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                        <select value={selectedClassForWords} onChange={e => setSelectedClassForWords(e.target.value)} className="w-full p-3 bg-yellow-50 border border-yellow-200 rounded-xl font-bold mb-6 text-yellow-900 outline-none focus:ring-2 ring-yellow-400"><option value="">-- Select Class --</option>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select>
                         {selectedClassForWords && (
                             <div className="animate-slide-in">
-                                {/* Word Form logic remains same */}
                                 <div className={`p-4 rounded-2xl mb-6 ${editingWordId ? 'bg-orange-50 border-2 border-orange-200' : ''}`}>
                                     <div className="flex gap-2 mb-4">
                                         <input placeholder="Type Word..." value={newWordForm.word} onChange={e => setNewWordForm({...newWordForm, word: e.target.value})} className="flex-1 bg-white border-2 border-yellow-100 p-3 rounded-xl text-lg font-bold outline-none focus:border-yellow-400"/>
@@ -675,30 +606,18 @@ const App = () => {
                                         <input placeholder="Origin" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-gray-50 p-3 rounded-xl md:col-span-2"/>
                                     </div>
                                     <div className="flex gap-2">
-                                        <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`flex-1 text-white font-bold py-4 rounded-xl shadow-lg transform active:scale-95 transition-all ${editingWordId ? 'bg-orange-500' : 'bg-green-500 hover:bg-green-600'}`}>
-                                            {editingWordId ? 'UPDATE' : 'ADD'}
-                                        </button>
+                                        <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`flex-1 text-white font-bold py-4 rounded-xl shadow-lg transform active:scale-95 transition-all ${editingWordId ? 'bg-orange-500' : 'bg-green-500 hover:bg-green-600'}`}>{editingWordId ? 'UPDATE' : 'ADD'}</button>
                                         {editingWordId && <button onClick={cancelEditing} className="bg-gray-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:bg-gray-600">CANCEL</button>}
                                     </div>
                                 </div>
-                                <div className="space-y-2">
-                                    {(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (
-                                        <div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100 hover:scale-[1.01] transition-transform">
-                                            <div><span className="font-bold text-yellow-900">{w.word}</span><p className="text-xs text-yellow-700 truncate w-64">{w.definition}</p></div>
-                                            <div className="flex gap-2"><button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Edit3 size={16}/></button><button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="bg-white text-red-400 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></div>
-                                        </div>
-                                    ))}
-                                </div>
+                                <div className="space-y-2">{(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (<div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100 hover:scale-[1.01] transition-transform"><div><span className="font-bold text-yellow-900">{w.word}</span><p className="text-xs text-yellow-700 truncate w-64">{w.definition}</p></div><div className="flex gap-2"><button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded hover:scale-110 transition-transform"><Edit3 size={16}/></button><button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="bg-white text-red-400 p-2 rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button></div></div>))}</div>
                             </div>
                         )}
                     </div>
                 )}
                 {adminTab === 'exam_control' && (
                     <div className="bg-white p-8 rounded-3xl shadow-lg border-b-8 border-red-500">
-                        <select className="w-full p-4 bg-red-50 rounded-xl font-bold text-lg mb-6" value={adminSelectedTestClass} onChange={e => setAdminSelectedTestClass(e.target.value)}>
-                            <option value="">-- Select Target Class --</option>
-                            {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                        <select className="w-full p-4 bg-red-50 rounded-xl font-bold text-lg mb-6" value={adminSelectedTestClass} onChange={e => setAdminSelectedTestClass(e.target.value)}><option value="">-- Select Target Class --</option>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select>
                         {adminSelectedTestClass && (
                             <div className="animate-slide-in">
                                 <div className="grid md:grid-cols-2 gap-6 mb-6">
@@ -708,6 +627,29 @@ const App = () => {
                                 <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} className={`w-full py-6 rounded-2xl font-black text-2xl shadow-xl transform active:scale-95 transition-all ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>{testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}</button>
                             </div>
                         )}
+                    </div>
+                )}
+                {/* NEW: ADMIN MONITOR TAB */}
+                {adminTab === 'monitor' && (
+                    <div className="bg-white p-8 rounded-3xl shadow-lg border border-yellow-200">
+                        <h2 className="text-2xl font-black mb-6 text-red-600 flex items-center gap-2"><AlertTriangle/> Live Test Monitor</h2>
+                        <div className="grid gap-4">
+                            {allSessions.filter(s => s.active).length === 0 ? (
+                                <div className="text-center p-8 bg-green-50 rounded-xl text-green-700 font-bold">No Active Tests Running</div>
+                            ) : (
+                                allSessions.filter(s => s.active).map(s => (
+                                    <div key={s.class_id} className="flex justify-between items-center bg-red-50 p-4 rounded-xl border border-red-200 animate-pulse">
+                                        <div>
+                                            <h3 className="text-xl font-black text-red-900">{s.class_id}</h3>
+                                            <p className="text-red-700 text-sm font-bold uppercase">{s.mode}</p>
+                                        </div>
+                                        <button onClick={() => updateSession(s.class_id, false)} className="bg-red-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-red-700 flex items-center gap-2">
+                                            <Power size={20}/> FORCE STOP
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
                     </div>
                 )}
                 {adminTab === 'results' && (
@@ -738,6 +680,7 @@ const App = () => {
             </header>
             <div className="flex justify-center gap-4 mb-8">
                 <button onClick={() => setTeacherTab('test_control')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'test_control' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Test Control</button>
+                <button onClick={() => setTeacherTab('word_jar')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'word_jar' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Word Jar</button>
                 <button onClick={() => setTeacherTab('results')} className={`px-6 py-2 rounded-full font-bold transition ${teacherTab === 'results' ? 'bg-green-600 text-white' : 'bg-white text-gray-500'}`}>Results</button>
             </div>
             <div className="max-w-4xl mx-auto grid gap-6 animate-slide-in">
@@ -753,9 +696,37 @@ const App = () => {
                   </button>
               </div>
               )}
+              {/* NEW: WORD JAR TAB FOR TEACHERS */}
+              {teacherTab === 'word_jar' && (
+                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
+                    <h3 className="text-xl font-black mb-4 flex items-center gap-2 text-purple-700"><Beaker/> Practice Word Jar</h3>
+                    <p className="mb-4 text-sm text-gray-500 bg-gray-50 p-2 rounded">Words added here are for <b>Practice Mode Only</b>. They will not appear in official tests.</p>
+                    <div className="p-4 rounded-2xl mb-6 bg-purple-50 border-2 border-purple-100">
+                        <div className="flex gap-2 mb-4">
+                            <input placeholder="Type Word..." value={newWordForm.word} onChange={e => setNewWordForm({...newWordForm, word: e.target.value})} className="flex-1 bg-white border-2 border-purple-100 p-3 rounded-xl text-lg font-bold outline-none focus:border-purple-400"/>
+                            <button onClick={fetchRealDictionaryData} disabled={loadingAI} className="bg-white text-purple-700 px-6 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-100 disabled:opacity-50">{loadingAI ? <RefreshCw className="animate-spin"/> : <Sparkles/>} Auto</button>
+                        </div>
+                        <div className="grid md:grid-cols-2 gap-3 mb-4">
+                            <textarea placeholder="Definition" value={newWordForm.definition} onChange={e => setNewWordForm({...newWordForm, definition: e.target.value})} className="bg-white p-3 rounded-xl resize-none h-24"/>
+                            <textarea placeholder="Usage" value={newWordForm.usage} onChange={e => setNewWordForm({...newWordForm, usage: e.target.value})} className="bg-white p-3 rounded-xl resize-none h-24"/>
+                            <input placeholder="Synonyms" value={newWordForm.synonyms} onChange={e => setNewWordForm({...newWordForm, synonyms: e.target.value})} className="bg-white p-3 rounded-xl"/>
+                            <input placeholder="Antonyms" value={newWordForm.antonyms} onChange={e => setNewWordForm({...newWordForm, antonyms: e.target.value})} className="bg-white p-3 rounded-xl"/>
+                            <input placeholder="Origin" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-white p-3 rounded-xl md:col-span-2"/>
+                        </div>
+                        <button onClick={() => handleSaveWord(currentUser.class_id, 'teacher')} className="w-full bg-purple-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-purple-700">ADD TO JAR</button>
+                    </div>
+                    <div className="space-y-2">
+                         {(wordBank[currentUser.class_id] || []).filter(w => w.source === 'teacher').map(w => (
+                             <div key={w._id} className="flex justify-between items-center bg-purple-50 p-3 rounded-xl border border-purple-100">
+                                 <div><span className="font-bold text-purple-900">{w.word}</span></div>
+                                 <button onClick={() => handleDeleteWord(currentUser.class_id, w._id, 'teacher')} className="bg-white text-red-400 p-2 rounded hover:scale-110"><Trash2 size={16}/></button>
+                             </div>
+                         ))}
+                    </div>
+                 </div>
+              )}
               {teacherTab === 'results' && (
                   <div className="space-y-4">
-                      {/* Teacher only sees their class leaderboard */}
                       <Leaderboard type={currentUser.class_id} data={results.filter(r => r.class_id === currentUser.class_id)} />
                   </div>
               )}
@@ -776,32 +747,12 @@ const App = () => {
                 <div className="absolute -right-4 -top-4 text-green-100 opacity-50 group-hover:scale-110 transition-transform"><BookOpen size={100}/></div>
                 <h2 className="text-2xl font-black text-green-800 relative z-10">Practice Mode</h2>
                 <div className="mt-4 flex flex-col gap-2 relative z-10">
-                    {/* UPDATED: Timer Options */}
-                    <div className="flex items-center justify-between">
-                         <div className="flex items-center gap-2"><Clock size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Timer</span></div>
-                         <select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}>
-                            <option value={0}>None</option>
-                            <option value={3}>3s</option>
-                            <option value={5}>5s</option>
-                            <option value={10}>10s</option>
-                            <option value={30}>30s</option>
-                        </select>
-                    </div>
-                    {/* UPDATED: Word Count Selection */}
-                    <div className="flex items-center justify-between">
-                         <div className="flex items-center gap-2"><Sparkles size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Words</span></div>
-                         <select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceWordCount} onChange={e => setPracticeWordCount(e.target.value)}>
-                            <option value="5">5 Words</option>
-                            <option value="10">10 Words</option>
-                            <option value="20">20 Words</option>
-                            <option value="all">All Words</option>
-                        </select>
-                    </div>
+                    <div className="flex items-center justify-between"><div className="flex items-center gap-2"><Clock size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Timer</span></div><select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceTimer} onChange={e => setPracticeTimer(parseInt(e.target.value))}><option value={0}>None</option><option value={3}>3s</option><option value={5}>5s</option><option value={10}>10s</option><option value={30}>30s</option></select></div>
+                    <div className="flex items-center justify-between"><div className="flex items-center gap-2"><Sparkles size={16} className="text-green-600"/><span className="font-bold text-sm text-green-800">Words</span></div><select className="bg-green-50 rounded-lg p-2 text-sm font-bold text-green-800 outline-none" value={practiceWordCount} onChange={e => setPracticeWordCount(e.target.value)}><option value="5">5 Words</option><option value="10">10 Words</option><option value="20">20 Words</option><option value="all">All Words</option></select></div>
                 </div>
                 <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-500 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-600 transform active:scale-95 transition-all relative z-10">Start Studying</button>
             </div>
             
-            {/* Other buttons (Games / Live Test) */}
             <div className="bg-gradient-to-br from-purple-500 to-indigo-600 p-6 rounded-[2rem] shadow-lg border-b-8 border-indigo-800 text-white hover:scale-[1.02] transition-transform duration-300">
                 <h2 className="text-2xl font-black mb-4 flex items-center gap-2"><Gamepad2/> Fun Games</h2>
                 <div className="grid grid-cols-2 gap-3">
@@ -840,34 +791,20 @@ const App = () => {
                     <span className="text-green-600">{game.index + 1}/{game.words.length}</span>
                 </div>
                 
-                {/* LARGE WORD DISPLAY (For Quiz, Origin, Unscramble, Blanks) */}
                 {game.gameType === 'spelling' && (
-                    <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group active:scale-95">
-                        <Volume2 size={48} className="text-yellow-900 group-hover:rotate-12 transition-transform"/>
-                    </button>
+                    <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group active:scale-95"><Volume2 size={48} className="text-yellow-900 group-hover:rotate-12 transition-transform"/></button>
                 )}
                 {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop break-words">{scrambled}</div>}
                 {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm animate-pop break-words">{maskedWord}</div>}
+                {(game.gameType === 'quiz' || game.gameType === 'origin') && <div className="text-3xl font-black text-gray-800 mb-8 animate-slide-in break-words">"{currentWord.word}"</div>}
                 
-                {/* For Quiz/Origin, show the word in quotes */}
-                {(game.gameType === 'quiz' || game.gameType === 'origin') && (
-                    <div className="text-3xl font-black text-gray-800 mb-8 animate-slide-in break-words">"{currentWord.word}"</div>
-                )}
-                
-                {/* INPUT AREA */}
                 {(game.gameType === 'quiz' || game.gameType === 'origin') ? (
                     <div className="grid gap-3">
-                        {quizOptions.map((opt, i) => (
-                            <button key={i} onClick={() => { setGame({...game, input: opt}); setTimeout(() => submitWord(), 100); }} 
-                                className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95 break-words whitespace-normal h-auto">{opt}</button>
-                        ))}
+                        {quizOptions.map((opt, i) => (<button key={i} onClick={() => { setGame({...game, input: opt}); setTimeout(() => submitWord(), 100); }} className="bg-gray-50 border-2 border-gray-100 p-4 rounded-xl text-left font-bold hover:bg-yellow-100 hover:border-yellow-300 text-gray-700 text-sm transition-all transform active:scale-95 break-words whitespace-normal h-auto">{opt}</button>))}
                     </div>
                 ) : (
                     <>
-                        <input autoFocus type="text" value={game.input} onChange={e => setGame({...game, input: e.target.value})} onKeyDown={e => e.key === 'Enter' && submitWord()}
-                            className="w-full text-center text-4xl md:text-5xl font-black text-green-900 border-b-4 border-green-200 focus:border-yellow-400 outline-none pb-4 mb-4 uppercase placeholder-gray-200 tracking-wider" placeholder="TYPE HERE"/>
-                        
-                        {/* Control Buttons (Submit, Skip, Stop) */}
+                        <input autoFocus type="text" value={game.input} onChange={e => setGame({...game, input: e.target.value})} onKeyDown={e => e.key === 'Enter' && submitWord()} className="w-full text-center text-4xl md:text-5xl font-black text-green-900 border-b-4 border-green-200 focus:border-yellow-400 outline-none pb-4 mb-4 uppercase placeholder-gray-200 tracking-wider" placeholder="TYPE HERE"/>
                         <div className="grid grid-cols-2 gap-2 mb-4">
                              <button onClick={() => submitWord('submit')} className="col-span-2 bg-green-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-green-600 transform hover:-translate-y-1 active:translate-y-0 transition-all">SUBMIT</button>
                              <button onClick={() => submitWord('skip')} className="bg-gray-100 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-200 flex items-center justify-center gap-2"><SkipForward size={18}/> Skip</button>
@@ -876,19 +813,11 @@ const App = () => {
                     </>
                 )}
 
-                {/* HINTS (SPEAK BUTTONS) - Available in Practice AND Rush Mode */}
                 {(game.mode === 'practice' || game.mode === 'test_rush') && (
                     <div className="mt-6 pt-6 border-t border-gray-100 grid grid-cols-3 gap-2">
-                        {/* Replaced Text with Speak Buttons */}
-                        <button onClick={() => speak(currentWord.definition)} className="bg-blue-50 p-3 rounded-xl text-xs text-blue-800 font-bold hover:bg-blue-100 transition flex flex-col items-center">
-                            <span className="text-[10px] uppercase text-blue-400 mb-1">Def</span><Mic size={20}/>
-                        </button>
-                        <button onClick={() => speak(currentWord.usage)} className="bg-green-50 p-3 rounded-xl text-xs text-green-800 font-bold hover:bg-green-100 transition flex flex-col items-center">
-                            <span className="text-[10px] uppercase text-green-400 mb-1">Use</span><Mic size={20}/>
-                        </button>
-                        <button onClick={() => speak(currentWord.etymology)} className="bg-purple-50 p-3 rounded-xl text-xs text-purple-800 font-bold hover:bg-purple-100 transition flex flex-col items-center">
-                            <span className="text-[10px] uppercase text-purple-400 mb-1">Origin</span><Mic size={20}/>
-                        </button>
+                        <button onClick={() => speak(currentWord.definition)} className="bg-blue-50 p-3 rounded-xl text-xs text-blue-800 font-bold hover:bg-blue-100 transition flex flex-col items-center"><span className="text-[10px] uppercase text-blue-400 mb-1">Def</span><Mic size={20}/></button>
+                        <button onClick={() => speak(currentWord.usage)} className="bg-green-50 p-3 rounded-xl text-xs text-green-800 font-bold hover:bg-green-100 transition flex flex-col items-center"><span className="text-[10px] uppercase text-green-400 mb-1">Use</span><Mic size={20}/></button>
+                        <button onClick={() => speak(currentWord.etymology)} className="bg-purple-50 p-3 rounded-xl text-xs text-purple-800 font-bold hover:bg-purple-100 transition flex flex-col items-center"><span className="text-[10px] uppercase text-purple-400 mb-1">Origin</span><Mic size={20}/></button>
                     </div>
                 )}
             </div>
