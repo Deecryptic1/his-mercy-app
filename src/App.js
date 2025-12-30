@@ -4,7 +4,7 @@ import {
   Shield, User, LogOut, Trash2, 
   Volume2, X, Eye, EyeOff, Edit3, 
   BookOpen, Trophy, Clock, Gamepad2, 
-  Sparkles, Plus, RefreshCw, Key
+  Sparkles, Plus, RefreshCw, Key, Menu 
 } from 'lucide-react';
 import logo from './logo.jpg'; 
 
@@ -39,19 +39,20 @@ const App = () => {
   };
 
   const API_URL = 'https://school-app-backend.onrender.com/api';
-  
+   
   // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
   const [activeView, setActiveView] = useState('login'); 
   const [adminTab, setAdminTab] = useState('students'); 
   const [teacherTab, setTeacherTab] = useState('test_control');
+  const [showMobileMenu, setShowMobileMenu] = useState(false); 
 
-  // DATABASE DATA (Initialized empty, populated via API)
+  // DATABASE DATA
   const [classes, setClasses] = useState([]); 
   const [users, setUsers] = useState([]); 
   const [wordBank, setWordBank] = useState({}); 
   const [results, setResults] = useState([]); 
-  const [activeSession, setActiveSession] = useState({ active: false }); // Student Poll State
+  const [activeSession, setActiveSession] = useState({ active: false }); 
 
   // Forms
   const [loginForm, setLoginForm] = useState({ username: '', password: '', role: 'student' });
@@ -60,16 +61,14 @@ const App = () => {
   const [isAutoID, setIsAutoID] = useState(true); 
   const [newWordForm, setNewWordForm] = useState({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
   const [editingWordId, setEditingWordId] = useState(null); 
-  
+   
   const [selectedClassForWords, setSelectedClassForWords] = useState('');
   const [adminSelectedTestClass, setAdminSelectedTestClass] = useState(''); 
   const [practiceTimer, setPracticeTimer] = useState(0);
   const [loadingAI, setLoadingAI] = useState(false); 
 
-  // Exam Config (Teacher/Admin)
+  // Exam Config
   const [sessionConfig, setSessionConfig] = useState({ mode: 'test_standard', globalTimer: 60, timerPerWord: 0 });
-  
-  // Test Session State (For local view logic)
   const [testSessions, setTestSessions] = useState({}); 
 
   const [game, setGame] = useState({ 
@@ -77,40 +76,39 @@ const App = () => {
     mode: 'practice', gameType: 'spelling', timeLeft: 0 
   });
 
-  // --- DATA LOADING & PERSISTENCE ---
-  
+  // --- DATA SYNCING ---
   const refreshData = () => {
-      // Fetch Classes from DB
+      // 1. Get Classes from DB
       fetch(`${API_URL}/classes`)
         .then(r => r.json())
         .then(data => setClasses(data.map(d => d.name).sort()))
         .catch(e => console.log("Classes not loaded"));
 
-      // Fetch Results from DB
+      // 2. Get Results from DB
       fetch(`${API_URL}/results`)
         .then(r => r.json())
         .then(setResults)
         .catch(e => console.log("Results not loaded"));
 
-      // Fetch Users if Admin
+      // 3. Get Users if Admin
       if(currentUser?.role === 'admin') {
           fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers);
       }
   };
 
   useEffect(() => {
-    // 1. Check Login Session
+    // Check local session
     const savedUser = localStorage.getItem('hms_user_session');
     if (savedUser) {
         const parsedUser = JSON.parse(savedUser);
         setCurrentUser(parsedUser);
         setActiveView(parsedUser.role === 'student' ? 'student_dash' : parsedUser.role === 'teacher' ? 'teacher_dash' : 'admin_dash');
     }
-    // 2. Load Data from DB
+    // Load Data
     refreshData();
   }, []);
 
-  // Poll for Live Tests (Student Only)
+  // Poll for Active Tests (Student View)
   useEffect(() => {
       let poller;
       if (currentUser?.role === 'student' && activeView === 'student_dash') {
@@ -125,8 +123,6 @@ const App = () => {
 
   useEffect(() => {
     if (currentUser) refreshData();
-    
-    // Load Words for specific contexts
     const targetClass = currentUser?.class_id || selectedClassForWords || adminSelectedTestClass;
     if (targetClass) {
         fetch(`${API_URL}/words/${targetClass}`).then(r => r.json())
@@ -139,16 +135,13 @@ const App = () => {
   const fetchRealDictionaryData = async () => {
     const word = newWordForm.word.trim();
     if(!word) return alert("Please type a word first!");
-    
     setLoadingAI(true);
     try {
         const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
         if (!res.ok) throw new Error("Word not found");
-        
         const data = await res.json();
         const entry = data[0];
         const meaning = entry.meanings[0];
-        
         setNewWordForm(prev => ({
             ...prev,
             definition: meaning.definitions[0]?.definition || "Definition not found.",
@@ -165,7 +158,7 @@ const App = () => {
     }
   };
 
-  // --- USER MANAGEMENT ---
+  // --- USER MGMT ---
   const handleResetPassword = async (userId, userName) => {
       const newPass = prompt(`Enter NEW Password for ${userName}:`);
       if (!newPass) return;
@@ -175,13 +168,13 @@ const App = () => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ newPassword: newPass })
           });
-          if (res.ok) alert(`Success! Password for ${userName} updated.`);
+          if (res.ok) alert(`Success! Password updated.`);
           else alert("Failed to reset password.");
       } catch (e) { alert("Server Error."); }
   };
 
   const handleDeleteUser = async (userId, userName) => {
-      if(!window.confirm(`Are you sure you want to delete ${userName}? This cannot be undone.`)) return;
+      if(!window.confirm(`Delete ${userName}?`)) return;
       try {
           const res = await fetch(`${API_URL}/users/${userId}`, { method: 'DELETE' });
           if(res.ok) {
@@ -202,14 +195,13 @@ const App = () => {
         if (res.ok) {
             alert("User Saved!");
             setUserForm({ name: '', username: '', password: '', role: 'student', class_id: '' });
-            refreshData(); // Fetch from DB immediately
+            refreshData(); 
         } else {
             alert("Save Failed.");
         }
     } catch (e) { alert("Connection Error"); }
   };
 
-  // --- AUTH ---
   const handleLogin = async () => {
     if (loginForm.username === 'admin' && loginForm.password === 'admin') {
       const masterUser = { _id: 'master', role: 'admin', name: 'Master Admin' };
@@ -246,43 +238,32 @@ const App = () => {
       localStorage.removeItem('hms_user_session');
   };
 
-  // --- CLASS MANAGEMENT (DB SYNCED) ---
+  // --- CLASS MGMT (DB SYNCED) ---
   const handleAddClass = async () => {
       const name = prompt("Enter new Class Name (e.g., Year 7):");
       if(!name) return;
-      
       const res = await fetch(`${API_URL}/classes`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ name })
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
       });
-      
       if(res.ok) refreshData();
       else alert("Class might already exist or server error.");
   };
-  
+   
   const handleDeleteClass = async (name) => {
       if(!window.confirm(`Delete ${name}?`)) return;
-      
-      // Find ID first (Frontend mapping)
       const all = await fetch(`${API_URL}/classes`).then(r => r.json());
       const target = all.find(c => c.name === name);
-      
       if(target) {
           await fetch(`${API_URL}/classes/${target._id}`, { method: 'DELETE' });
           refreshData();
       }
   };
 
-  // --- WORD MANAGEMENT (DB SYNCED) ---
+  // --- WORD MGMT (DB SYNCED) ---
   const startEditingWord = (wordObj) => {
       setNewWordForm({
-          word: wordObj.word,
-          definition: wordObj.definition,
-          synonyms: wordObj.synonyms,
-          antonyms: wordObj.antonyms,
-          usage: wordObj.usage,
-          etymology: wordObj.etymology
+          word: wordObj.word, definition: wordObj.definition, synonyms: wordObj.synonyms,
+          antonyms: wordObj.antonyms, usage: wordObj.usage, etymology: wordObj.etymology
       });
       setEditingWordId(wordObj._id); 
       document.querySelector('.animate-in')?.scrollIntoView({ behavior: 'smooth' });
@@ -295,7 +276,6 @@ const App = () => {
 
   const handleSaveWord = async (targetClass, source) => {
     if (!targetClass || !newWordForm.word) return alert("Select Class & Word");
-    
     const entry = { ...newWordForm, class_id: targetClass, source };
     
     try {
@@ -304,20 +284,16 @@ const App = () => {
         const method = editingWordId ? 'PUT' : 'POST';
 
         res = await fetch(url, {
-            method: method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(entry)
+            method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry)
         });
 
         if (res.ok) {
             const savedWord = await res.json();
             setWordBank(prev => {
                 const currentList = prev[targetClass] || [];
-                if (editingWordId) {
-                    return { ...prev, [targetClass]: currentList.map(w => w._id === editingWordId ? savedWord : w) };
-                } else {
-                    return { ...prev, [targetClass]: [...currentList, savedWord] };
-                }
+                return editingWordId 
+                    ? { ...prev, [targetClass]: currentList.map(w => w._id === editingWordId ? savedWord : w) }
+                    : { ...prev, [targetClass]: [...currentList, savedWord] };
             });
             setNewWordForm({ word: '', definition: '', synonyms: '', antonyms: '', usage: '', etymology: '' });
             setEditingWordId(null);
@@ -328,32 +304,20 @@ const App = () => {
 
   const handleDeleteWord = async (targetClass, id, userRole) => {
       const word = wordBank[targetClass].find(w => w._id === id);
-      if (userRole === 'teacher' && word.source === 'admin') return alert("Permission Denied: Teachers cannot remove Admin words.");
-      
+      if (userRole === 'teacher' && word.source === 'admin') return alert("Permission Denied.");
       try {
           await fetch(`${API_URL}/words/${id}`, { method: 'DELETE' });
           setWordBank(prev => ({ ...prev, [targetClass]: prev[targetClass].filter(w => w._id !== id) }));
       } catch (e) { alert("Failed to delete word"); }
   };
 
-  // --- LIVE EXAM CONTROL ---
+  // --- LIVE EXAM ---
   const updateSession = async (targetClass, isActive) => {
       await fetch(`${API_URL}/session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-              class_id: targetClass, 
-              active: isActive, 
-              ...sessionConfig 
-          })
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ class_id: targetClass, active: isActive, ...sessionConfig })
       });
-      
-      // Update local state for immediate feedback UI
-      setTestSessions(prev => ({
-          ...prev, 
-          [targetClass]: { active: isActive, ...sessionConfig }
-      }));
-      
+      setTestSessions(prev => ({ ...prev, [targetClass]: { active: isActive, ...sessionConfig } }));
       alert(isActive ? "Test Activated!" : "Test Stopped.");
   };
 
@@ -373,20 +337,15 @@ const App = () => {
         timer = mode === 'test_rush' ? activeSession.globalTimer : activeSession.timerPerWord;
         sessionWords = words.filter(w => w.source === 'admin'); 
     } else if (origin === 'practice') {
-        mode = 'practice';
-        gameType = 'spelling';
-        timer = practiceTimer;
+        mode = 'practice'; gameType = 'spelling'; timer = practiceTimer;
     } else {
-        mode = 'fun';
-        gameType = origin; 
-        timer = 0;
+        mode = 'fun'; gameType = origin; timer = 0;
     }
 
     if (sessionWords.length === 0) return alert("No words available.");
 
     setGame({
-      active: true,
-      words: sessionWords.sort(() => Math.random() - 0.5),
+      active: true, words: sessionWords.sort(() => Math.random() - 0.5),
       index: 0, score: 0, input: '', mode, gameType, timeLeft: timer
     });
     setActiveView('game_interface');
@@ -419,7 +378,6 @@ const App = () => {
             let nextTime = 0;
             if (game.mode.includes('test')) nextTime = activeSession.timerPerWord;
             else nextTime = practiceTimer;
-            
             setGame(prev => ({ ...prev, index: nextIdx, score: nextScore, input: '', timeLeft: nextTime }));
             if(game.gameType === 'spelling') setTimeout(() => speak(game.words[nextIdx].word), 800);
         }
@@ -429,10 +387,8 @@ const App = () => {
   const finishGame = async (finalScore) => {
     setGame(prev => ({...prev, active: false}));
     if (game.mode.includes('test')) {
-        // Save to DB
         await fetch(`${API_URL}/results`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 student: currentUser.name, class_id: currentUser.class_id, score: finalScore, 
                 total: game.words.length, mode: game.mode, date: new Date().toLocaleString()
@@ -480,18 +436,28 @@ const App = () => {
   );
 
   // --- VIEWS ---
-  if (activeView === 'login') {
-    return (
+  if (activeView === 'login') return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-yellow-300 via-green-400 to-green-600 opacity-90"></div>
         <div className="absolute inset-0 opacity-20" style={{backgroundImage: 'radial-gradient(#fff 2px, transparent 2px)', backgroundSize: '30px 30px'}}></div>
         <div className="bg-white/95 backdrop-blur-xl p-8 md:p-12 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.2)] w-full max-w-md border-4 border-white relative z-10">
             <div className="flex flex-col items-center mb-8">
-                <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mb-4 shadow-xl border-4 border-white overflow-hidden transform hover:scale-110 transition-transform">
-                   <img src={logo} alt="Logo" className="w-full h-full object-cover" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}} />
+                {/* --- CHANGED: LOGO OR QUEEN BEE --- */}
+                <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mb-4 shadow-xl border-4 border-white overflow-hidden transform hover:scale-110 transition-transform relative">
+                   <img 
+                     src={logo} 
+                     alt="School Logo" 
+                     className="w-full h-full object-cover relative z-10" 
+                     onError={(e) => {
+                        e.target.style.display = 'none'; // Hide broken image
+                        e.target.nextSibling.style.display = 'flex'; // Show fallback
+                     }} 
+                   />
+                   {/* Fallback Queen Bee if logo missing */}
+                   <div className="hidden absolute inset-0 items-center justify-center text-6xl animate-bounce z-0">👑🐝</div>
                 </div>
+                {/* ---------------------------------- */}
                 <h1 className="text-4xl font-black text-green-800 text-center uppercase tracking-tighter">un<span className="text-yellow-500">BEE</span>lievable<br/><span className="text-2xl">Spellers</span></h1>
-                <p className="text-green-600 font-bold mt-2 text-sm tracking-widest">HIS MERCY PRIVATE SCHOOL</p>
             </div>
             <div className="flex bg-gray-100 p-1 rounded-full mb-6 shadow-inner">
                 {['student', 'teacher', 'admin'].map(r => (
@@ -519,26 +485,45 @@ const App = () => {
             </div>
         </div>
       </div>
-    );
-  }
+  );
 
   if (activeView === 'admin_dash') {
     const filteredUsers = users.filter(u => u.role === adminTab.slice(0, -1));
     return (
       <div className="min-h-screen bg-yellow-50 flex flex-col font-sans">
         <header className="bg-white border-b border-yellow-200 p-4 flex justify-between items-center sticky top-0 z-20 shadow-sm">
-            <div className="flex items-center gap-2"><img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><h1 className="text-xl font-black text-yellow-900">Queen Bee Portal</h1></div>
+            <div className="flex items-center gap-2">
+                <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="md:hidden text-yellow-900 p-2 rounded hover:bg-yellow-100"><Menu size={24}/></button>
+                <img src={logo} alt="Logo" className="w-10 h-10 rounded-full border border-yellow-400" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/>
+                <h1 className="text-xl font-black text-yellow-900">Queen Bee Portal</h1>
+            </div>
             <button onClick={handleLogout} className="text-red-500 font-bold flex gap-2 hover:bg-red-50 px-4 py-2 rounded-xl transition"><LogOut size={18}/> Exit</button>
         </header>
-        <div className="flex flex-1 overflow-hidden">
-            <nav className="w-64 bg-white border-r border-yellow-200 p-4 hidden md:flex flex-col gap-2">
+        <div className="flex flex-1 overflow-hidden relative">
+            {/* --- CHANGED: FIXED MOBILE MENU WITH CLOSE BUTTON --- */}
+            {showMobileMenu && (
+                <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowMobileMenu(false)}></div>
+            )}
+            
+            <nav className={`
+                fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-yellow-200 p-4 flex flex-col gap-2 shadow-2xl
+                transform transition-transform duration-300 ease-in-out 
+                ${showMobileMenu ? 'translate-x-0' : '-translate-x-full'} 
+                md:relative md:translate-x-0 md:shadow-none md:z-0
+            `}>
+                <div className="flex justify-between items-center mb-4 md:hidden">
+                    <span className="font-bold text-yellow-900 text-lg">Menu</span>
+                    <button onClick={() => setShowMobileMenu(false)} className="text-gray-500 p-2"><X size={24}/></button>
+                </div>
                 {['students', 'teachers', 'classes', 'curriculum', 'exam_control', 'results'].map(tab => (
-                    <button key={tab} onClick={() => setAdminTab(tab)} className={`w-full text-left p-3 rounded-xl font-bold capitalize ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md' : 'text-gray-500 hover:bg-yellow-50'}`}>
+                    <button key={tab} onClick={() => { setAdminTab(tab); setShowMobileMenu(false); }} className={`w-full text-left p-3 rounded-xl font-bold capitalize ${adminTab === tab ? 'bg-yellow-400 text-yellow-900 shadow-md' : 'text-gray-500 hover:bg-yellow-50'}`}>
                         {tab.replace('_', ' ')}
                     </button>
                 ))}
             </nav>
-            <main className="flex-1 p-8 overflow-y-auto">
+            {/* ---------------------------------------------------- */}
+
+            <main className="flex-1 p-8 overflow-y-auto w-full">
                 {['students', 'teachers'].includes(adminTab) && (
                     <div className="space-y-6">
                         <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
@@ -550,170 +535,96 @@ const App = () => {
                                     {classes.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
                                 <div className="flex items-center gap-2">
-                                    <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>
-                                        {isAutoID ? 'Auto Gen' : 'Manual'}
-                                    </button>
-                                    {isAutoID && <button onClick={() => {
-                                        if (!userForm.name) return alert("Name needed!");
-                                        const rnd = Math.floor(Math.random()*900)+100;
-                                        const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,'');
-                                        setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`}));
-                                    }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200"><RefreshCw size={18}/></button>}
+                                    <button onClick={() => setIsAutoID(!isAutoID)} className={`p-3 rounded-xl font-bold border-2 ${isAutoID ? 'bg-yellow-100 border-yellow-400 text-yellow-900' : 'bg-gray-100 border-gray-300 text-gray-500'}`}>{isAutoID ? 'Auto' : 'Manual'}</button>
+                                    {isAutoID && <button onClick={() => { if (!userForm.name) return alert("Name needed!"); const rnd = Math.floor(Math.random()*900)+100; const clean = userForm.name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g,''); setUserForm(prev => ({...prev, username: `HMS-${clean}-${rnd}`, password: `${clean}@${rnd}`})); }} className="bg-green-100 text-green-800 font-bold rounded-xl flex items-center justify-center px-4 hover:bg-green-200"><RefreshCw size={18}/></button>}
                                 </div>
                             </div>
                             <div className="grid md:grid-cols-2 gap-4 mb-4">
-                                <input placeholder="Username" value={userForm.username} onChange={e => !isAutoID && setUserForm({...userForm, username: e.target.value})} readOnly={isAutoID} className={`${isAutoID ? 'bg-gray-100' : 'bg-white border-2 border-yellow-200'} p-3 rounded-xl font-mono text-gray-700`}/>
-                                <input placeholder="Password" value={userForm.password} onChange={e => !isAutoID && setUserForm({...userForm, password: e.target.value})} readOnly={isAutoID} className={`${isAutoID ? 'bg-gray-100' : 'bg-white border-2 border-yellow-200'} p-3 rounded-xl font-mono text-gray-700`}/>
+                                <input placeholder="Username" value={userForm.username} onChange={e => !isAutoID && setUserForm({...userForm, username: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
+                                <input placeholder="Password" value={userForm.password} onChange={e => !isAutoID && setUserForm({...userForm, password: e.target.value})} readOnly={isAutoID} className="bg-gray-100 p-3 rounded-xl"/>
                             </div>
-                            <button onClick={handleSaveUser} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-700">SAVE TO HIVE</button>
+                            <button onClick={handleSaveUser} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-700">SAVE</button>
                         </div>
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
-                            <h3 className="font-bold mb-4 text-yellow-900">Existing Colony Members</h3>
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 overflow-x-auto">
                             {filteredUsers.length > 0 ? (
-                                <table className="w-full text-left">
-                                    <thead className="bg-yellow-50"><tr><th className="p-3 rounded-l-xl">Name</th><th className="p-3">Class</th><th className="p-3">Username</th><th className="p-3 rounded-r-xl">Action</th></tr></thead>
+                                <table className="w-full text-left min-w-[600px]">
+                                    <thead className="bg-yellow-50"><tr><th className="p-3">Name</th><th className="p-3">Class</th><th className="p-3">User</th><th className="p-3">Act</th></tr></thead>
                                     <tbody>{filteredUsers.map(u => (
-                                        <tr key={u._id} className="border-b border-yellow-50 hover:bg-yellow-50/50">
-                                            <td className="p-3 font-bold text-gray-700">{u.name}</td><td className="p-3"><span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold">{u.class_id}</span></td><td className="p-3 font-mono text-sm text-gray-500">{u.username}</td>
-                                            <td className="p-3 flex gap-2">
-                                                <button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded-lg hover:bg-blue-200" title="Reset Password"><Key size={16}/></button>
-                                                <button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200" title="Delete User"><Trash2 size={16}/></button>
-                                            </td>
-                                        </tr>
+                                        <tr key={u._id} className="border-b"><td className="p-3">{u.name}</td><td className="p-3">{u.class_id}</td><td className="p-3 font-mono">{u.username}</td><td className="p-3 flex gap-2"><button onClick={() => handleResetPassword(u._id, u.name)} className="bg-blue-100 text-blue-600 p-2 rounded"><Key size={16}/></button><button onClick={() => handleDeleteUser(u._id, u.name)} className="bg-red-100 text-red-600 p-2 rounded"><Trash2 size={16}/></button></td></tr>
                                     ))}</tbody>
                                 </table>
-                            ) : <FunEmptyState message={`No ${adminTab} found. Start adding them!`} />}
+                            ) : <FunEmptyState message="No users found." />}
                         </div>
                     </div>
                 )}
-                
                 {adminTab === 'classes' && (
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100 max-w-lg">
-                        <h2 className="font-bold text-lg mb-4 text-yellow-900">Manage Classes</h2>
-                        <div className="flex gap-2 mb-6">
-                            <button onClick={handleAddClass} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow hover:bg-green-700 flex justify-center items-center gap-2"><Plus/> Add New Class</button>
-                        </div>
+                        <div className="flex gap-2 mb-6"><button onClick={handleAddClass} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow hover:bg-green-700 flex justify-center items-center gap-2"><Plus/> Add New Class</button></div>
                         {classes.length > 0 ? (
-                            <div className="space-y-2">
-                                {classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}
-                            </div>
+                            <div className="space-y-2">{classes.map(c => <div key={c} className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl font-bold border border-yellow-100 text-yellow-900 shadow-sm">{c} <button onClick={() => handleDeleteClass(c)} className="text-red-400 hover:text-red-600"><Trash2/></button></div>)}</div>
                         ) : <FunEmptyState message="No classes added yet!" />}
                     </div>
                 )}
-
                 {adminTab === 'curriculum' && (
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-yellow-100">
-                        <h2 className="font-bold text-yellow-900 mb-4 text-xl">Honey Jar (Word Bank)</h2>
                         <select value={selectedClassForWords} onChange={e => setSelectedClassForWords(e.target.value)} className="w-full p-3 bg-yellow-50 border border-yellow-200 rounded-xl font-bold mb-6 text-yellow-900 outline-none focus:ring-2 ring-yellow-400">
                             <option value="">-- Select Class --</option>
                             {classes.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         {selectedClassForWords && (
-                            <div className="animate-in fade-in slide-in-from-top-4">
+                            <div className="animate-in fade-in">
                                 <div className={`p-4 rounded-2xl mb-6 ${editingWordId ? 'bg-orange-50 border-2 border-orange-200' : ''}`}>
-                                    {editingWordId && <div className="text-orange-600 font-bold mb-2 flex justify-between items-center"><span>EDITING MODE</span> <button onClick={cancelEditing} className="text-sm underline">Cancel</button></div>}
                                     <div className="flex gap-2 mb-4">
                                         <input placeholder="Type Word..." value={newWordForm.word} onChange={e => setNewWordForm({...newWordForm, word: e.target.value})} className="flex-1 bg-white border-2 border-yellow-100 p-3 rounded-xl text-lg font-bold outline-none focus:border-yellow-400"/>
-                                        <button onClick={fetchRealDictionaryData} disabled={loadingAI} className="bg-purple-100 text-purple-700 px-6 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-200 disabled:opacity-50">
-                                            {loadingAI ? <RefreshCw className="animate-spin"/> : <Sparkles/>} Auto-Fill
-                                        </button>
+                                        <button onClick={fetchRealDictionaryData} disabled={loadingAI} className="bg-purple-100 text-purple-700 px-6 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-200 disabled:opacity-50">{loadingAI ? <RefreshCw className="animate-spin"/> : <Sparkles/>} Auto</button>
                                     </div>
                                     <div className="grid md:grid-cols-2 gap-3 mb-4">
                                         <textarea placeholder="Definition" value={newWordForm.definition} onChange={e => setNewWordForm({...newWordForm, definition: e.target.value})} className="bg-gray-50 p-3 rounded-xl resize-none h-24"/>
-                                        <textarea placeholder="Usage Sentence" value={newWordForm.usage} onChange={e => setNewWordForm({...newWordForm, usage: e.target.value})} className="bg-gray-50 p-3 rounded-xl resize-none h-24"/>
+                                        <textarea placeholder="Usage" value={newWordForm.usage} onChange={e => setNewWordForm({...newWordForm, usage: e.target.value})} className="bg-gray-50 p-3 rounded-xl resize-none h-24"/>
                                         <input placeholder="Synonyms" value={newWordForm.synonyms} onChange={e => setNewWordForm({...newWordForm, synonyms: e.target.value})} className="bg-gray-50 p-3 rounded-xl"/>
                                         <input placeholder="Antonyms" value={newWordForm.antonyms} onChange={e => setNewWordForm({...newWordForm, antonyms: e.target.value})} className="bg-gray-50 p-3 rounded-xl"/>
-                                        <input placeholder="Etymology" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-gray-50 p-3 rounded-xl md:col-span-2"/>
+                                        <input placeholder="Origin" value={newWordForm.etymology} onChange={e => setNewWordForm({...newWordForm, etymology: e.target.value})} className="bg-gray-50 p-3 rounded-xl md:col-span-2"/>
                                     </div>
-                                    <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`w-full text-white font-bold py-4 rounded-xl shadow-lg ${editingWordId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-600 hover:bg-green-700'}`}>
-                                        {editingWordId ? 'UPDATE WORD IN JAR' : 'ADD TO OFFICIAL LIST'}
-                                    </button>
+                                    <button onClick={() => handleSaveWord(selectedClassForWords, 'admin')} className={`w-full text-white font-bold py-4 rounded-xl shadow-lg ${editingWordId ? 'bg-orange-500' : 'bg-green-600'}`}>{editingWordId ? 'UPDATE' : 'ADD'}</button>
                                 </div>
-                                
-                                <div className="mt-8">
-                                    <h3 className="font-bold text-gray-400 text-sm mb-4 uppercase tracking-widest border-b pb-2">Words in Jar</h3>
-                                    {(wordBank[selectedClassForWords] || []).length > 0 ? (
-                                        <div className="space-y-2">
-                                            {(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (
-                                                <div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100">
-                                                    <div><span className="font-bold text-yellow-900">{w.word}</span><p className="text-xs text-yellow-700 truncate w-64">{w.definition}</p></div>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded-lg hover:bg-blue-200" title="Edit Word"><Edit3 size={16}/></button>
-                                                        <button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="text-red-400 bg-white p-2 rounded-lg hover:text-red-600"><Trash2 size={16}/></button>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                <div className="space-y-2">
+                                    {(wordBank[selectedClassForWords] || []).filter(w=>w.source==='admin').map(w => (
+                                        <div key={w._id} className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-100">
+                                            <div><span className="font-bold text-yellow-900">{w.word}</span><p className="text-xs text-yellow-700 truncate w-64">{w.definition}</p></div>
+                                            <div className="flex gap-2"><button onClick={() => startEditingWord(w)} className="bg-blue-100 text-blue-600 p-2 rounded"><Edit3 size={16}/></button><button onClick={() => handleDeleteWord(selectedClassForWords, w._id, 'admin')} className="bg-white text-red-400 p-2 rounded"><Trash2 size={16}/></button></div>
                                         </div>
-                                    ) : <FunEmptyState message="No words yet. Feed the bees!" />}
+                                    ))}
                                 </div>
                             </div>
                         )}
                     </div>
                 )}
-                
                 {adminTab === 'exam_control' && (
                     <div className="bg-white p-8 rounded-3xl shadow-lg border-b-8 border-red-500">
-                        <h2 className="text-2xl font-black mb-6 text-red-600 flex items-center gap-2"><Shield/> Super Admin Test Override</h2>
-                        <p className="mb-6 text-gray-500">You can start or stop a test for ANY class here, overriding the teacher.</p>
-                        
-                        <div className="mb-6">
-                            <label className="font-bold block mb-2">Select Target Class</label>
-                            <select className="w-full p-4 bg-red-50 rounded-xl font-bold text-lg border-2 border-red-100 outline-none focus:border-red-400" 
-                                value={adminSelectedTestClass} onChange={e => setAdminSelectedTestClass(e.target.value)}>
-                                <option value="">-- Select Class --</option>
-                                {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                        </div>
-
+                        <select className="w-full p-4 bg-red-50 rounded-xl font-bold text-lg mb-6" value={adminSelectedTestClass} onChange={e => setAdminSelectedTestClass(e.target.value)}>
+                            <option value="">-- Select Target Class --</option>
+                            {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                         {adminSelectedTestClass && (
-                            <div className="animate-in fade-in">
+                            <div>
                                 <div className="grid md:grid-cols-2 gap-6 mb-6">
-                                    <div className="bg-gray-50 p-4 rounded-xl">
-                                        <label className="font-bold block mb-2">Test Mode</label>
-                                        <select className="w-full p-3 rounded-lg border outline-none" 
-                                            value={sessionConfig.mode} 
-                                            onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}>
-                                            <option value="test_standard">Standard Spelling</option>
-                                            <option value="test_rush">Rush Hour (Speed)</option>
-                                            <option value="test_unscramble">Unscramble</option>
-                                            <option value="test_quiz">Quiz</option>
-                                        </select>
-                                    </div>
-                                    <div className="bg-gray-50 p-4 rounded-xl">
-                                        <label className="font-bold block mb-2">Timer Settings</label>
-                                        {(sessionConfig.mode === 'test_rush') ? (
-                                             <input type="number" placeholder="Global Timer (sec)" className="w-full p-3 rounded-lg border" value={sessionConfig.globalTimer} 
-                                                onChange={e => setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/>
-                                        ) : (
-                                             <input type="number" placeholder="Per Word Timer (sec)" className="w-full p-3 rounded-lg border" value={sessionConfig.timerPerWord} 
-                                                onChange={e => setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>
-                                        )}
-                                    </div>
+                                    <div><label className="block font-bold mb-2">Mode</label><select className="w-full p-3 border rounded-lg" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}><option value="test_standard">Standard</option><option value="test_rush">Rush Hour</option><option value="test_unscramble">Unscramble</option><option value="test_quiz">Quiz</option></select></div>
+                                    <div><label className="block font-bold mb-2">Timer</label>{sessionConfig.mode === 'test_rush' ? <input type="number" className="w-full p-3 border rounded-lg" value={sessionConfig.globalTimer} onChange={e=>setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/> : <input type="number" className="w-full p-3 border rounded-lg" value={sessionConfig.timerPerWord} onChange={e=>setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>}</div>
                                 </div>
-                                <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} 
-                                    className={`w-full py-6 rounded-2xl font-black text-2xl transition-all shadow-xl ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>
-                                    {testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}
-                                </button>
+                                <button onClick={() => updateSession(adminSelectedTestClass, !activeSession.active)} className={`w-full py-6 rounded-2xl font-black text-2xl shadow-xl ${testSessions[adminSelectedTestClass]?.active ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-700'}`}>{testSessions[adminSelectedTestClass]?.active ? 'STOP CLASS TEST' : 'START CLASS TEST'}</button>
                             </div>
                         )}
                     </div>
                 )}
-
                 {adminTab === 'results' && (
                     <div className="space-y-4">
-                        <h2 className="text-xl font-bold text-yellow-900">Global Progress Monitor</h2>
-                        {results.length > 0 ? (
-                            results.map((r, i) => (
-                                <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
-                                    <div className="flex items-center gap-3">
-                                        <div className="bg-green-100 p-2 rounded-full"><Trophy size={20} className="text-green-600"/></div>
-                                        <div><span className="font-bold text-gray-800">{r.student}</span> <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-500">{r.class_id}</span></div>
-                                    </div>
-                                    <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
-                                    <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
-                                </div>
-                            ))
-                        ) : <FunEmptyState message="No results yet. Start testing!" />}
+                        {results.length > 0 ? results.map((r, i) => (
+                            <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
+                                <div className="flex items-center gap-3"><div className="bg-green-100 p-2 rounded-full"><Trophy size={20} className="text-green-600"/></div><div><span className="font-bold text-gray-800">{r.student}</span> <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-500">{r.class_id}</span></div></div>
+                                <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
+                                <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
+                            </div>
+                        )) : <FunEmptyState message="No results yet." />}
                     </div>
                 )}
             </main>
@@ -739,50 +650,32 @@ const App = () => {
             <div className="max-w-4xl mx-auto grid gap-6">
                 {teacherTab === 'test_control' && (
                 <div className="bg-white p-8 rounded-[2rem] shadow-xl border-b-8 border-green-600">
-                    <h3 className="text-2xl font-black mb-6 text-green-800 flex items-center gap-2"><Trophy className="text-yellow-500"/> Class Control Center</h3>
+                    <h3 className="text-2xl font-black mb-6 text-green-800 flex items-center gap-2"><Trophy className="text-yellow-500"/> Class Control</h3>
                     <div className="grid md:grid-cols-2 gap-6 mb-6">
-                         <div>
-                            <label className="font-bold block mb-2">Test Mode</label>
-                            <select className="w-full p-3 bg-gray-50 rounded-xl font-bold text-gray-700" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}>
-                                <option value="test_standard">Standard Spelling</option>
-                                <option value="test_rush">Rush Hour (Speed)</option>
-                                <option value="test_unscramble">Unscramble</option>
-                                <option value="test_quiz">Quiz</option>
-                            </select>
-                         </div>
-                         <div>
-                            <label className="font-bold block mb-2">Timer</label>
-                            {sessionConfig.mode === 'test_rush' ? 
-                                <input type="number" placeholder="Global (sec)" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.globalTimer} onChange={e=>setSessionConfig({...sessionConfig, globalTimer: parseInt(e.target.value)})}/> :
-                                <input type="number" placeholder="Per Word (sec)" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.timerPerWord} onChange={e=>setSessionConfig({...sessionConfig, timerPerWord: parseInt(e.target.value)})}/>
-                            }
-                         </div>
-                    </div>
-                    <button onClick={() => updateSession(cls, !session.active)} className={`w-full py-4 rounded-xl font-black text-lg transition-all ${session.active ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white hover:bg-green-600'}`}>
-                        {session.active ? 'STOP TEST' : 'START TEST'}
-                    </button>
-                </div>
-                )}
-                {teacherTab === 'results' && (
-                    <div className="space-y-4">
-                         {results.filter(r => r.class === cls).map((r, i) => (
-                            <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
-                                <div><span className="font-bold text-gray-800">{r.student}</span></div>
-                                <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
-                                <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-  }
+                         <div><label className="font-bold block mb-2">Mode</label><select className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.mode} onChange={e => setSessionConfig({...sessionConfig, mode: e.target.value})}><option value="test_standard">Standard</option><option value="test_rush">Rush Hour</option><option value="test_unscramble">Unscramble</option><option value="test_quiz">Quiz</option></select></div>
+                         <div><label className="font-bold block mb-2">Timer</label><input type="number" className="w-full p-3 bg-gray-50 rounded-xl" value={sessionConfig.mode === 'test_rush' ? sessionConfig.globalTimer : sessionConfig.timerPerWord} onChange={e=>setSessionConfig(prev => sessionConfig.mode === 'test_rush' ? {...prev, globalTimer: parseInt(e.target.value)} : {...prev, timerPerWord: parseInt(e.target.value)})}/></div>
+                  </div>
+                  <button onClick={() => updateSession(currentUser.class_id, !session.active)} className={`w-full py-4 rounded-xl font-black text-lg transition-all ${session.active ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white hover:bg-green-600'}`}>
+                      {session.active ? 'STOP TEST' : 'START TEST'}
+                  </button>
+              </div>
+              )}
+              {teacherTab === 'results' && (
+                  <div className="space-y-4">
+                        {results.filter(r => r.class === currentUser.class_id).map((r, i) => (
+                          <div key={i} className="bg-white p-4 rounded-2xl flex justify-between shadow-sm border border-yellow-50 items-center">
+                              <div><span className="font-bold text-gray-800">{r.student}</span></div>
+                              <div className="text-gray-400 text-sm font-bold uppercase">{r.mode}</div>
+                              <div className="font-black text-xl text-green-600">{r.score}/{r.total}</div>
+                          </div>
+                      ))}
+                  </div>
+              )}
+          </div>
+      </div>
+  );
 
-  // --- STUDENT VIEW ---
-  if (activeView === 'student_dash') {
-    const isTestActive = activeSession.active; // Use activeSession from polling
-    return (
+  if (activeView === 'student_dash') return (
       <div className="min-h-screen bg-yellow-50 p-6 flex flex-col items-center font-sans">
         <header className="w-full max-w-2xl flex justify-between items-center mb-8">
             <div className="flex items-center gap-4"><img src={logo} alt="Logo" className="w-14 h-14 rounded-full border-4 border-white shadow-md" onError={(e) => {e.target.onerror = null; e.target.src="https://cdn-icons-png.flaticon.com/512/3413/3413535.png"}}/><div className="leading-tight"><h1 className="text-2xl font-black text-green-900">Hi, {currentUser.name.split(' ')[0]}!</h1><p className="text-yellow-600 font-bold tracking-widest text-xs uppercase">Student • {currentUser.class_id}</p></div></div>
@@ -797,7 +690,6 @@ const App = () => {
                 </div>
                 <button onClick={() => startSession('practice')} className="mt-4 w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700 relative z-10">Start Studying</button>
             </div>
-            
             <div className="bg-gradient-to-br from-purple-500 to-indigo-600 p-6 rounded-[2rem] shadow-lg border-b-8 border-indigo-800 text-white">
                 <h2 className="text-2xl font-black mb-4 flex items-center gap-2"><Gamepad2/> Fun Games</h2>
                 <div className="grid grid-cols-2 gap-3">
@@ -807,24 +699,21 @@ const App = () => {
                     <button onClick={() => startSession('origin')} className="bg-white/20 hover:bg-white/30 py-2 rounded-xl font-bold text-sm">🌍 Origin</button>
                 </div>
             </div>
-
-            <button onClick={() => isTestActive && startSession('test_live')} className={`p-6 rounded-[2rem] shadow-lg border-b-8 text-left transition-transform ${isTestActive ? 'bg-yellow-400 border-yellow-600 hover:scale-[1.02] cursor-pointer' : 'bg-gray-200 border-gray-300 grayscale cursor-not-allowed'}`}>
+            <button onClick={() => activeSession.active && startSession('test_live')} className={`p-6 rounded-[2rem] shadow-lg border-b-8 text-left transition-transform ${activeSession.active ? 'bg-yellow-400 border-yellow-600 hover:scale-[1.02] cursor-pointer' : 'bg-gray-200 border-gray-300 grayscale cursor-not-allowed'}`}>
                  <div className="flex items-center gap-4">
                     <div className="bg-white/30 p-3 rounded-full"><Trophy className="text-white" size={32}/></div>
-                    <div><h2 className="text-2xl font-black text-white mix-blend-hard-light">{isTestActive ? 'TAKE TEST' : 'TEST LOCKED'}</h2><p className="text-white/60 text-sm font-bold">{isTestActive ? "Good luck!" : "Wait for teacher"}</p></div>
+                    <div><h2 className="text-2xl font-black text-white mix-blend-hard-light">{activeSession.active ? 'TAKE TEST' : 'TEST LOCKED'}</h2><p className="text-white/60 text-sm font-bold">{activeSession.active ? "Good luck!" : "Wait for teacher"}</p></div>
                  </div>
             </button>
         </div>
       </div>
-    );
-  }
+  );
 
-  // --- GAME INTERFACE ---
   if (activeView === 'game_interface') {
     const currentWord = game.words[game.index];
     const scrambled = currentWord?.word.split('').sort(() => Math.random() - 0.5).join(' ');
     const maskedWord = currentWord?.word.replace(/[aeiou]/gi, '_');
-    
+     
     return (
         <div className="min-h-screen bg-green-600 flex flex-col items-center justify-center p-6 relative font-sans">
             <div className="absolute inset-0 opacity-10 pointer-events-none" style={{backgroundImage: 'radial-gradient(circle, #ffffff 2px, transparent 2px)', backgroundSize: '24px 24px'}}></div>
@@ -834,7 +723,6 @@ const App = () => {
                     <span className="uppercase text-green-800 bg-green-100 px-2 py-1 rounded">{game.mode} • {game.gameType}</span>
                     <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full font-mono">{game.timeLeft > 0 ? `${game.timeLeft}s` : '∞'}</span>
                 </div>
-
                 {game.gameType === 'spelling' && (
                     <button onClick={() => speak(currentWord.word)} className="bg-yellow-400 p-8 rounded-full shadow-[0_10px_20px_rgba(250,204,21,0.4)] hover:scale-110 transition-transform mb-6 group">
                         <Volume2 size={48} className="text-yellow-900 group-hover:rotate-12 transition-transform"/>
@@ -843,7 +731,6 @@ const App = () => {
                 {game.gameType === 'unscramble' && <div className="text-5xl font-black text-purple-600 mb-8 tracking-widest uppercase drop-shadow-sm">{scrambled}</div>}
                 {game.gameType === 'blanks' && <div className="text-5xl font-black text-orange-500 mb-8 tracking-widest uppercase drop-shadow-sm">{maskedWord}</div>}
                 {(game.gameType === 'quiz' || game.gameType === 'origin') && <div className="text-3xl font-black text-gray-800 mb-8">"{currentWord.word}"</div>}
-
                 {(game.gameType === 'quiz' || game.gameType === 'origin') ? (
                     <div className="grid gap-3">
                         {quizOptions.map((opt, i) => (
