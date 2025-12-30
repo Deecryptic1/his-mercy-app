@@ -38,7 +38,11 @@ const App = () => {
     window.speechSynthesis.speak(u);
   };
 
-  const API_URL = 'https://school-app-backend.onrender.com/api';
+  // --- AUTOMATIC SERVER DETECTION ---
+  // If we are on "localhost", use the local database. If we are on Netlify/Render, use the cloud database.
+  const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5000/api'  // Testing on Computer
+    : 'https://school-app-backend.onrender.com/api'; // Live Website
    
   // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
@@ -80,9 +84,12 @@ const App = () => {
   const refreshData = () => {
       // 1. Get Classes from DB
       fetch(`${API_URL}/classes`)
-        .then(r => r.json())
+        .then(r => {
+            if(!r.ok) throw new Error("Server not responding");
+            return r.json();
+        })
         .then(data => setClasses(data.map(d => d.name).sort()))
-        .catch(e => console.log("Classes not loaded"));
+        .catch(e => console.log("Classes not loaded - Is the backend server running?"));
 
       // 2. Get Results from DB
       fetch(`${API_URL}/results`)
@@ -92,7 +99,7 @@ const App = () => {
 
       // 3. Get Users if Admin
       if(currentUser?.role === 'admin') {
-          fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers);
+          fetch(`${API_URL}/users`).then(r => r.json()).then(setUsers).catch(e => console.log("Users not loaded"));
       }
   };
 
@@ -199,7 +206,7 @@ const App = () => {
         } else {
             alert("Save Failed.");
         }
-    } catch (e) { alert("Connection Error"); }
+    } catch (e) { alert("Connection Error - Is the backend running?"); }
   };
 
   const handleLogin = async () => {
@@ -242,20 +249,28 @@ const App = () => {
   const handleAddClass = async () => {
       const name = prompt("Enter new Class Name (e.g., Year 7):");
       if(!name) return;
-      const res = await fetch(`${API_URL}/classes`, {
-          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
-      });
-      if(res.ok) refreshData();
-      else alert("Class might already exist or server error.");
+      try {
+        const res = await fetch(`${API_URL}/classes`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
+        });
+        if(res.ok) refreshData();
+        else alert("Class might already exist.");
+      } catch (error) {
+          alert("Server Error: Cannot connect to database.");
+      }
   };
    
   const handleDeleteClass = async (name) => {
       if(!window.confirm(`Delete ${name}?`)) return;
-      const all = await fetch(`${API_URL}/classes`).then(r => r.json());
-      const target = all.find(c => c.name === name);
-      if(target) {
-          await fetch(`${API_URL}/classes/${target._id}`, { method: 'DELETE' });
-          refreshData();
+      try {
+        const all = await fetch(`${API_URL}/classes`).then(r => r.json());
+        const target = all.find(c => c.name === name);
+        if(target) {
+            await fetch(`${API_URL}/classes/${target._id}`, { method: 'DELETE' });
+            refreshData();
+        }
+      } catch (error) {
+          alert("Server Error: Cannot connect to database.");
       }
   };
 
@@ -299,7 +314,7 @@ const App = () => {
             setEditingWordId(null);
             alert(editingWordId ? "Word Updated!" : "Word Added!");
         }
-    } catch (e) { alert("Failed to save word"); }
+    } catch (e) { alert("Failed to save word - Server Error"); }
   };
 
   const handleDeleteWord = async (targetClass, id, userRole) => {
