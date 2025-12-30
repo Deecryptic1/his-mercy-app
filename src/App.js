@@ -58,7 +58,7 @@ const App = () => {
   // --- AUTOMATIC SERVER DETECTION ---
   const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:5000/api'  
-    : 'https://school-app-backend-d4fi.onrender.com'; 
+    : 'https://school-app-backend-d4fi.onrender.com/api'; 
    
   // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
